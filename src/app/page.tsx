@@ -278,8 +278,8 @@ export default function Home() {
     return { x: worldX, y: worldY };
   }, [offsetX, offsetY, scale]);
 
-  useEffect(() => {
-    if (activeInteractionNodeId) return; // Do not adjust while user is interacting
+ useEffect(() => {
+    if (activeInteractionNodeId) return; 
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
     const nodesToConsider = nodes;
@@ -841,13 +841,14 @@ export default function Home() {
   
   const worldViewBox = useMemo(() => {
     if (!isClient || scale === 0 || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0) {
-        return { x: 0, y: 0, width: 0, height: 0 };
+        // Return a default viewBox that has non-zero width and height to avoid rendering issues
+        return { x: 0, y: 0, width: 1, height: 1 };
     }
     const x = -offsetX / scale;
     const y = -offsetY / scale;
     const width = containerWidth / scale;
     const height = CONTAINER_HEIGHT_PX / scale;
-    return { x, y, width, height };
+    return { x, y, width: Math.max(1, width), height: Math.max(1, height) }; // Ensure width/height are at least 1
   }, [isClient, offsetX, offsetY, scale, containerWidth]);
 
 
@@ -1263,3 +1264,4 @@ export default function Home() {
     </main>
   );
 }
+
