@@ -59,7 +59,6 @@ const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50;
-// const SVG_OFFSET = 5000; // Reverted: No longer using fixed large SVG with offset
 
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
@@ -86,6 +85,7 @@ function formatTagsWithDates(tags: EdgeTag[]): string {
   }).join(', ');
 }
 
+// Grid Helper Functions
 const getGridLineSeparation = (scale: number): number => {
   if (scale < 0.4) {
     return BASE_GRID_SIZE * 4;
@@ -219,7 +219,7 @@ export default function Home() {
           loadedNodes = []; 
         }
       }
-      setNodes(loadedNodes); // Reverted: Directly set loaded nodes
+      setNodes(loadedNodes);
 
       const storedEdgesString = localStorage.getItem(EDGES_KEY);
       let loadedEdges: Edge[] = [];
@@ -238,7 +238,7 @@ export default function Home() {
       setNodes([]); 
       setEdges([]);
     }
-  }, [/* Removed containerWidth, saveNodesToLocalStorage (if only for centering) */ ]);
+  }, []);
 
 
   useEffect(() => {
@@ -268,11 +268,11 @@ export default function Home() {
   }, [offsetX, offsetY, scale]);
 
   useEffect(() => {
-    if (activeInteractionNodeId) return; // Prevent pan limit adjustments during active drag
+    if (activeInteractionNodeId) return; 
 
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
-    const nodesToConsider = nodes; // No longer filter activeInteractionNodeId here, as the effect bails out if active
+    const nodesToConsider = nodes; 
 
     let contentMinXWorld = 0, contentMaxXWorld = 0, contentMinYWorld = 0, contentMaxYWorld = 0;
 
@@ -536,7 +536,7 @@ export default function Home() {
 
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
     const timer = setTimeout(() => {
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { // Check activeId again
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
       }
@@ -718,7 +718,7 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-          if ((fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId ))) {
+          if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
               continue; 
           }
 
@@ -892,7 +892,7 @@ export default function Home() {
           }}
         >
           <svg
-            className="absolute top-0 left-0 w-full h-full pointer-events-none" // Changed from fixed large SVG
+            className="absolute top-0 left-0 w-full h-full pointer-events-none" 
           >
             {/* Grid Lines */}
             {isClient && gridData.verticalLines.map((lineX) => (
@@ -1234,3 +1234,4 @@ export default function Home() {
     </main>
   );
 }
+
