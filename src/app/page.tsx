@@ -369,8 +369,7 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-    // Clamp current offsetX and offsetY to the new limits (this was moved to separate effects before, then reverted)
-    // Keeping it here for now as per reverted state. If issues arise, split again.
+    // Clamp current offsetX and offsetY to the new limits
     const currentClampedOffsetX = Math.max(newPanXLimits.min, Math.min(newPanXLimits.max, offsetX));
     if (currentClampedOffsetX !== offsetX) {
         setOffsetX(currentClampedOffsetX);
@@ -618,7 +617,6 @@ export default function Home() {
 
       for (const node of nodes) {
         if (node.id === activeInteractionNodeId && isLinkingModeActive) continue; // Don't target self during linking
-        // if (node.id === activeInteractionNodeId && isDraggingForReposition) continue; // Original node being dragged
         const nodeDim = getNodeDimension(node);
         if (worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
             worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim) {
@@ -649,17 +647,8 @@ export default function Home() {
                 const updatedNodes = nodes.map(n => {
                     if (n.id === linkingSourceNodeId) {
                         const nodeDim = getNodeDimension(n);
-                        // Adjust release position to be the center of the node for saving
-                        let newX = worldMouseReleasePos.x - nodeDim / 2;
-                        let newY = worldMouseReleasePos.y - nodeDim / 2;
-                         // Use dragOffset if available and node didn't move much, else use release pos
-                        if (dragOffset && Math.abs(point.clientX - interactionStartPos!.x) < DRAG_MOVE_THRESHOLD && Math.abs(point.clientY - interactionStartPos!.y) < DRAG_MOVE_THRESHOLD) {
-                           newX = n.x; // Keep original x if no significant drag
-                           newY = n.y; // Keep original y
-                        } else {
-                           newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
-                           newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
-                        }
+                        let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
+                        let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
                         return { ...n, x: newX, y: newY };
                     }
                     return n;
@@ -682,7 +671,6 @@ export default function Home() {
                 setNewEdgeTagsInput("");
                 setIsCreateEdgeDialogOpen(true);
             }
-            // Save position of the dragged node as it was dropped, even if opening edge dialog
             saveNodesToLocalStorage(nodes); 
         } else if (draggedNodeId) { 
             saveNodesToLocalStorage(nodes); 
@@ -738,8 +726,7 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-           // If either node is the fixedNodeId, skip repulsion involving it
-          if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
+          if ((fixedNodeId && nodeA.id === fixedNodeId) || (fixedNodeId && nodeB.id === fixedNodeId)) {
               continue;
           }
 
@@ -817,9 +804,9 @@ export default function Home() {
 
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
     let changed = false;
-    // Check if any non-fixed node actually moved
+
     for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i].id === activeInteractionNodeId) continue; // Skip the fixed node
+        if (nodes[i].id === activeInteractionNodeId) continue; 
         const rn = repulsedNodes.find(r => r.id === nodes[i].id);
         if (rn && (Math.abs(nodes[i].x - rn.x) > 0.1 || Math.abs(nodes[i].y - rn.y) > 0.1)) {
             changed = true;
@@ -830,9 +817,9 @@ export default function Home() {
     if (changed) {
       const timeoutId = setTimeout(() => {
         setNodes(currentNodes => currentNodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn; // Keep fixed node as is
+            if (cn.id === activeInteractionNodeId) return cn; 
             const rn = repulsedNodes.find(r => r.id === cn.id);
-            return rn || cn; // Update if found in repulsedNodes, else keep current
+            return rn || cn; 
         }));
       }, 50);
       return () => clearTimeout(timeoutId);
@@ -911,27 +898,19 @@ export default function Home() {
             height: '100%',
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
             transformOrigin: '0 0',
-            willChange: 'transform', // Hint for performance
+            willChange: 'transform', 
           }}
         >
-          {/* SVG for Grid Lines - Reverted to large SVG approach */}
           <svg
-            className="absolute pointer-events-none"
-            style={{
-              left: `-${SVG_OFFSET}px`, // Ensure SVG covers a large area beyond initial view
-              top: `-${SVG_OFFSET}px`,
-              width: `${SVG_OFFSET * 2 + containerWidth}px`, // Dynamically adjust based on needs if possible
-              height: `${SVG_OFFSET * 2 + CONTAINER_HEIGHT_PX}px`,
-              // overflow: 'visible', // This might help if lines get clipped by SVG boundary itself
-            }}
+            className="absolute top-0 left-0 w-full h-full pointer-events-none"
           >
             {isClient && gridData.verticalLines.map((lineX) => (
               <line
                 key={`v-${lineX}`}
-                x1={lineX + SVG_OFFSET}
-                y1={gridData.worldView.top + SVG_OFFSET}
-                x2={lineX + SVG_OFFSET}
-                y2={gridData.worldView.top + gridData.worldView.height + SVG_OFFSET}
+                x1={lineX}
+                y1={gridData.worldView.top}
+                x2={lineX}
+                y2={gridData.worldView.top + gridData.worldView.height}
                 stroke="hsl(var(--border))"
                 strokeWidth={0.5 / scale} 
                 opacity="0.5"
@@ -940,17 +919,16 @@ export default function Home() {
             {isClient && gridData.horizontalLines.map((lineY) => (
               <line
                 key={`h-${lineY}`}
-                x1={gridData.worldView.left + SVG_OFFSET}
-                y1={lineY + SVG_OFFSET}
-                x2={gridData.worldView.left + gridData.worldView.width + SVG_OFFSET}
-                y2={lineY + SVG_OFFSET}
+                x1={gridData.worldView.left}
+                y1={lineY}
+                x2={gridData.worldView.left + gridData.worldView.width}
+                y2={lineY}
                 stroke="hsl(var(--border))"
                 strokeWidth={0.5 / scale}
                 opacity="0.5"
               />
             ))}
 
-            {/* SVG for Edges - Using the same large SVG strategy */}
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
               const targetNode = nodes.find(n => n.id === edge.targetNodeId);
@@ -962,10 +940,10 @@ export default function Home() {
               return (
                 <line
                   key={edge.id}
-                  x1={sourceNode.x + SVG_OFFSET + sourceDim / 2}
-                  y1={sourceNode.y + SVG_OFFSET + sourceDim / 2}
-                  x2={targetNode.x + SVG_OFFSET + targetDim / 2}
-                  y2={targetNode.y + SVG_OFFSET + targetDim / 2}
+                  x1={sourceNode.x + sourceDim / 2}
+                  y1={sourceNode.y + sourceDim / 2}
+                  x2={targetNode.x + targetDim / 2}
+                  y2={targetNode.y + targetDim / 2}
                   stroke="hsl(var(--ring))"
                   strokeWidth={2 / scale} 
                   opacity="0.6"
@@ -974,10 +952,10 @@ export default function Home() {
             })}
             {linkingLinePreview && (
               <line
-                x1={linkingLinePreview.x1 + SVG_OFFSET}
-                y1={linkingLinePreview.y1 + SVG_OFFSET}
-                x2={linkingLinePreview.x2 + SVG_OFFSET}
-                y2={linkingLinePreview.y2 + SVG_OFFSET}
+                x1={linkingLinePreview.x1}
+                y1={linkingLinePreview.y1}
+                x2={linkingLinePreview.x2}
+                y2={linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
                 strokeWidth={2 / scale} 
                 strokeDasharray={`${5/scale},${5/scale}`}
@@ -1263,3 +1241,5 @@ export default function Home() {
     </main>
   );
 }
+
+    
