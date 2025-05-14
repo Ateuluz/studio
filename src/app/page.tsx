@@ -48,7 +48,7 @@ interface Edge {
 
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
-const CONTAINER_HEIGHT_PX = 500; // Assuming this remains fixed, adjust if it becomes dynamic
+const CONTAINER_HEIGHT_PX = 500; 
 
 const PRESS_HOLD_THRESHOLD = 700;
 const DRAG_MOVE_THRESHOLD = 10;
@@ -59,7 +59,7 @@ const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50;
-const SVG_OFFSET = 5000; // Used for the large SVG method
+// const SVG_OFFSET = 5000; // Reverted: No longer using fixed large SVG with offset
 
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
@@ -142,7 +142,7 @@ export default function Home() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformedContentRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(768); // Default, updated on mount
+  const [containerWidth, setContainerWidth] = useState(768); 
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -219,32 +219,7 @@ export default function Home() {
           loadedNodes = []; 
         }
       }
-
-      const mainNode = loadedNodes.find(node => node.tags.includes("Main"));
-
-      if (mainNode && containerWidth > 0) {
-        const mainNodeOriginalX = mainNode.x;
-        const mainNodeOriginalY = mainNode.y;
-
-        const deltaX = -mainNodeOriginalX; 
-        const deltaY = -mainNodeOriginalY;
-
-        const adjustedNodes = loadedNodes.map(node => ({
-          ...node,
-          x: node.x + deltaX,
-          y: node.y + deltaY,
-        }));
-        setNodes(adjustedNodes);
-        saveNodesToLocalStorage(adjustedNodes); // Persist the newly centered coordinates
-
-        // Center the viewport on the new world origin (0,0)
-        setOffsetX(containerWidth / 2); 
-        setOffsetY(CONTAINER_HEIGHT_PX / 2);
-      } else {
-        setNodes(loadedNodes);
-        // If no "Main" node or containerWidth not ready, load nodes at saved positions.
-        // offsetX, offsetY will remain at their current values (e.g. default 0,0).
-      }
+      setNodes(loadedNodes); // Reverted: Directly set loaded nodes
 
       const storedEdgesString = localStorage.getItem(EDGES_KEY);
       let loadedEdges: Edge[] = [];
@@ -263,7 +238,7 @@ export default function Home() {
       setNodes([]); 
       setEdges([]);
     }
-  }, [containerWidth, saveNodesToLocalStorage /* setNodes, setEdges, setOffsetX, setOffsetY are stable & part of component scope */]);
+  }, [/* Removed containerWidth, saveNodesToLocalStorage (if only for centering) */ ]);
 
 
   useEffect(() => {
@@ -279,7 +254,6 @@ export default function Home() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Load data once containerWidth is potentially set (though loadDataFromLocalStorage handles containerWidth=0)
   useEffect(() => {
     loadDataFromLocalStorage();
   }, [loadDataFromLocalStorage]);
@@ -293,13 +267,12 @@ export default function Home() {
     return { x: worldX, y: worldY };
   }, [offsetX, offsetY, scale]);
 
-  // Effect to calculate and set pan limits
   useEffect(() => {
+    if (activeInteractionNodeId) return; // Prevent pan limit adjustments during active drag
+
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
-    const nodesToConsider = activeInteractionNodeId
-      ? nodes.filter(n => n.id !== activeInteractionNodeId)
-      : nodes;
+    const nodesToConsider = nodes; // No longer filter activeInteractionNodeId here, as the effect bails out if active
 
     let contentMinXWorld = 0, contentMaxXWorld = 0, contentMinYWorld = 0, contentMaxYWorld = 0;
 
@@ -309,7 +282,6 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else {
-      // Default view when no nodes exist: centered around world (0,0) or current pan
       const initialWorldViewCenterX = (-offsetX / scale) + (containerWidth / (2 * scale));
       const initialWorldViewCenterY = (-offsetY / scale) + (CONTAINER_HEIGHT_PX / (2 * scale));
       const defaultSpan = Math.max(containerWidth, CONTAINER_HEIGHT_PX) / (2 * scale) ;
@@ -319,24 +291,23 @@ export default function Home() {
       contentMaxYWorld = initialWorldViewCenterY + defaultSpan / 2;
     }
 
-    const paddingXWorld = (containerWidth / 2) / scale; // 50% of viewport width in world units
-    const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / scale; // 50% of viewport height in world units
+    const paddingXWorld = (containerWidth / 2) / scale; 
+    const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / scale; 
 
     const contentWorldWidth = contentMaxXWorld - contentMinXWorld;
     const contentWorldHeight = contentMaxYWorld - contentMinYWorld;
     
     let targetOffsetX, targetOffsetY;
 
-    // If content (plus padding for centering) is smaller than viewport, calculate offset to center it
     if (contentWorldWidth * scale <= containerWidth) {
         targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
-    } else { // Content is wider, use current offset as base for limit calc
+    } else { 
         targetOffsetX = offsetX; 
     }
 
     if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
         targetOffsetY = (CONTAINER_HEIGHT_PX / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
-    } else { // Content is taller
+    } else { 
         targetOffsetY = offsetY;
     }
 
@@ -369,7 +340,6 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-    // Clamp current offsetX and offsetY to the new limits
     const currentClampedOffsetX = Math.max(newPanXLimits.min, Math.min(newPanXLimits.max, offsetX));
     if (currentClampedOffsetX !== offsetX) {
         setOffsetX(currentClampedOffsetX);
@@ -435,7 +405,16 @@ export default function Home() {
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
       
-      const updatedNodes = [...nodes, newNodeToAdd];
+      let currentNodes = [...nodes];
+      if (newNodeToAdd.tags.includes("Main")) {
+        currentNodes = currentNodes.map(n => {
+          if (n.tags.includes("Main")) {
+            return { ...n, tags: n.tags.filter(t => t !== "Main") };
+          }
+          return n;
+        });
+      }
+      const updatedNodes = [...currentNodes, newNodeToAdd];
       setNodes(updatedNodes);
       saveNodesToLocalStorage(updatedNodes);
 
@@ -457,13 +436,26 @@ export default function Home() {
   const saveNodeChanges = () => {
     if (editingNode && editNodeName) {
       const tagsArray = editNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      const updatedNodes = nodes.map(n =>
+      
+      const provisionallyUpdatedNodes = nodes.map(n =>
         n.id === editingNode.id
         ? { ...n, name: editNodeName, description: editNodeDescription, tags: tagsArray, birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined }
         : n
       );
-      setNodes(updatedNodes);
-      saveNodesToLocalStorage(updatedNodes);
+
+      let processedNodes = [...provisionallyUpdatedNodes];
+      const editedNodeNowMain = provisionallyUpdatedNodes.find(n => n.id === editingNode.id)?.tags.includes("Main");
+
+      if (editedNodeNowMain) {
+        processedNodes = provisionallyUpdatedNodes.map(n => {
+          if (n.id !== editingNode.id && n.tags.includes("Main")) {
+            return { ...n, tags: n.tags.filter(t => t !== "Main") };
+          }
+          return n;
+        });
+      }
+      setNodes(processedNodes);
+      saveNodesToLocalStorage(processedNodes);
       setEditingNode(null);
       setIsEditNodeDialogOpen(false);
     }
@@ -544,7 +536,7 @@ export default function Home() {
 
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
     const timer = setTimeout(() => {
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) {
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { // Check activeId again
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
       }
@@ -616,11 +608,11 @@ export default function Home() {
       let targetNodeUnderneath: Node | null = null;
 
       for (const node of nodes) {
-        if (node.id === activeInteractionNodeId && isLinkingModeActive) continue; // Don't target self during linking
+        if (node.id === activeInteractionNodeId && isLinkingModeActive) continue; 
         const nodeDim = getNodeDimension(node);
         if (worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
             worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim) {
-            if(node.id !== linkingSourceNodeId) { // Don't target self if linking from self
+            if(node.id !== linkingSourceNodeId) { 
               targetNodeUnderneath = node;
               break;
             }
@@ -726,8 +718,8 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-          if ((fixedNodeId && nodeA.id === fixedNodeId) || (fixedNodeId && nodeB.id === fixedNodeId)) {
-              continue;
+          if ((fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId ))) {
+              continue; 
           }
 
           const dimA = getNodeDimension(nodeA);
@@ -777,7 +769,6 @@ export default function Home() {
     return newNodes;
   }, [getNodeDimension, containerWidth]);
 
-  // Global repulsion when no node is active
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return;
 
@@ -798,7 +789,6 @@ export default function Home() {
     }
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
-  // Repulsion around a fixed (active) node
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; 
 
@@ -902,8 +892,9 @@ export default function Home() {
           }}
         >
           <svg
-            className="absolute top-0 left-0 w-full h-full pointer-events-none"
+            className="absolute top-0 left-0 w-full h-full pointer-events-none" // Changed from fixed large SVG
           >
+            {/* Grid Lines */}
             {isClient && gridData.verticalLines.map((lineX) => (
               <line
                 key={`v-${lineX}`}
@@ -929,6 +920,7 @@ export default function Home() {
               />
             ))}
 
+            {/* Edges */}
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
               const targetNode = nodes.find(n => n.id === edge.targetNodeId);
@@ -950,6 +942,7 @@ export default function Home() {
                 />
               );
             })}
+            {/* Linking Preview Line */}
             {linkingLinePreview && (
               <line
                 x1={linkingLinePreview.x1}
@@ -1241,5 +1234,3 @@ export default function Home() {
     </main>
   );
 }
-
-    
