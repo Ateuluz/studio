@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -250,7 +249,6 @@ export default function Home() {
 
     } catch (error) {
       console.error("Failed to load data from localStorage during general operation:", error);
-      // Reset to empty arrays if there's a general loading error (e.g., localStorage not available)
       setNodes([]); 
       setEdges([]);
     }
@@ -276,7 +274,7 @@ export default function Home() {
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
-    if (!containerRef.current || scale === 0) return { x: 0, y: 0 }; // Avoid division by zero
+    if (!containerRef.current || scale === 0) return { x: 0, y: 0 }; 
     const rect = containerRef.current.getBoundingClientRect();
     const worldX = (screenX - rect.left - offsetX) / scale;
     const worldY = (screenY - rect.top - offsetY) / scale;
@@ -284,10 +282,9 @@ export default function Home() {
   }, [offsetX, offsetY, scale]);
 
  useEffect(() => {
-    if (activeInteractionNodeId) return; // Don't adjust pan limits while user is interacting
+    if (activeInteractionNodeId) return; 
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
-    // Consider all nodes for bounds calculation if no node is active
     const nodesToConsider = nodes;
 
     let contentMinXWorld = 0, contentMaxXWorld = 0, contentMinYWorld = 0, contentMaxYWorld = 0;
@@ -298,18 +295,15 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
-      // If no nodes, center the view around an arbitrary point (e.g., current view center)
-      // and provide a default span so sliders are still somewhat usable.
       const initialWorldViewCenterX = (-offsetX / scale) + (containerWidth / (2 * scale));
       const initialWorldViewCenterY = (-offsetY / scale) + (CONTAINER_HEIGHT_PX / (2 * scale));
-      const defaultSpan = Math.max(containerWidth, CONTAINER_HEIGHT_PX) / (2 * scale) ; // A reasonable default world area
+      const defaultSpan = Math.max(containerWidth, CONTAINER_HEIGHT_PX) / (2 * scale) ; 
       contentMinXWorld = initialWorldViewCenterX - defaultSpan / 2;
       contentMaxXWorld = initialWorldViewCenterX + defaultSpan / 2;
       contentMinYWorld = initialWorldViewCenterY - defaultSpan / 2;
       contentMaxYWorld = initialWorldViewCenterY + defaultSpan / 2;
     }
 
-    // Padding in world units (50% of viewport dimensions)
     const paddingXWorld = (containerWidth / 2) / scale; 
     const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / scale; 
 
@@ -318,24 +312,18 @@ export default function Home() {
     
     let targetOffsetX, targetOffsetY;
 
-    // If content width (scaled) is less than or equal to viewport width, center it.
     if (contentWorldWidth * scale <= containerWidth) {
-        // Calculate offset to center the content's midpoint in the viewport.
         targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
     } else { 
-        // If content is wider than viewport, allow panning.
-        // Keep current offsetX, but it will be clamped by min/max later.
         targetOffsetX = offsetX; 
     }
 
-    // If content height (scaled) is less than or equal to viewport height, center it.
     if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
         targetOffsetY = (CONTAINER_HEIGHT_PX / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
     } else { 
         targetOffsetY = offsetY; 
     }
 
-    // Calculate min/max offsets needed to keep content + padding within view
     const minOffsetX = containerWidth - (contentMaxXWorld * scale) - paddingXWorld * scale;
     const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
     const minOffsetY = CONTAINER_HEIGHT_PX - (contentMaxYWorld * scale) - paddingYWorld * scale;
@@ -343,7 +331,6 @@ export default function Home() {
     
     let finalMinOffsetX, finalMaxOffsetX, finalMinOffsetY, finalMaxOffsetY;
 
-    // If content is narrower than viewport (after scaling), fix offset to target (centering)
     if (contentWorldWidth * scale <= containerWidth) {
         finalMinOffsetX = targetOffsetX;
         finalMaxOffsetX = targetOffsetX;
@@ -352,7 +339,6 @@ export default function Home() {
         finalMaxOffsetX = maxOffsetX;
     }
 
-    // If content is shorter than viewport (after scaling), fix offset to target (centering)
     if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
         finalMinOffsetY = targetOffsetY;
         finalMaxOffsetY = targetOffsetY;
@@ -367,16 +353,13 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-    // Clamp current offsetX and offsetY to the new limits immediately
     const currentClampedOffsetX = Math.max(newPanXLimits.min, Math.min(newPanXLimits.max, offsetX));
     if (currentClampedOffsetX !== offsetX) {
-        // console.log("Clamping offsetX from", offsetX, "to", currentClampedOffsetX);
         setOffsetX(currentClampedOffsetX);
     }
 
     const currentClampedOffsetY = Math.max(newPanYLimits.min, Math.min(newPanYLimits.max, offsetY));
     if (currentClampedOffsetY !== offsetY) {
-        // console.log("Clamping offsetY from", offsetY, "to", currentClampedOffsetY);
         setOffsetY(currentClampedOffsetY);
     }
 
@@ -388,7 +371,6 @@ export default function Home() {
       
       let currentNodesForCreation = [...nodes];
       if (newNodeTags.includes("Main")) {
-        // If the new node is 'Main', remove 'Main' tag from any existing node
         currentNodesForCreation = currentNodesForCreation.map(n => {
           if (n.tags.includes("Main")) {
             return { ...n, tags: n.tags.filter(t => t !== "Main") };
@@ -404,21 +386,18 @@ export default function Home() {
       let attempts = 0;
       const newNodeDimension = getNodeDimension(newNodeType);
 
-      // Calculate the world coordinates for the center of the current view
       const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
       const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
 
-      // Define a smaller area (e.g., half the viewport width/height in world units) around the center for placement
       const creationAreaWorldWidth = (containerWidth / 2) / scale; 
       const creationAreaWorldHeight = (CONTAINER_HEIGHT_PX / 2) / scale; 
 
       do {
-        // Generate random position within the defined creation area
         newNodeX = worldViewCenterX - (creationAreaWorldWidth / 2) + Math.random() * creationAreaWorldWidth;
         newNodeY = worldViewCenterY - (creationAreaWorldHeight / 2) + Math.random() * creationAreaWorldHeight;
 
         let overlap = false;
-        for (const existingNode of currentNodesForCreation) { // Use currentNodesForCreation for overlap check
+        for (const existingNode of currentNodesForCreation) { 
           const existingNodeDimension = getNodeDimension(existingNode);
           if (
             newNodeX < existingNode.x + existingNodeDimension &&
@@ -434,7 +413,7 @@ export default function Home() {
         attempts++;
       } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
 
-      if (!placed) { // Fallback to center if no non-overlapping spot found
+      if (!placed) { 
         newNodeX = worldViewCenterX - newNodeDimension / 2;
         newNodeY = worldViewCenterY - newNodeDimension / 2;
       }
@@ -466,7 +445,7 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null); // Clear active interaction when dialog opens
+    setActiveInteractionNodeId(null); 
   }, []);
 
   const saveNodeChanges = () => {
@@ -479,7 +458,6 @@ export default function Home() {
         : n
       );
 
-      // If the edited node is now 'Main', remove 'Main' tag from any other node
       const editedNodeIsMain = tagsArray.includes("Main");
       if (editedNodeIsMain) {
         provisionallyUpdatedNodes = provisionallyUpdatedNodes.map(n => {
@@ -501,13 +479,10 @@ export default function Home() {
     if (!editingNode) return;
 
     const nodeIdToDelete = editingNode.id;
-
-    // Remove the node
     const updatedNodes = nodes.filter(node => node.id !== nodeIdToDelete);
     setNodes(updatedNodes);
     saveNodesToLocalStorage(updatedNodes);
 
-    // Remove connected edges
     const updatedEdges = edges.filter(edge => edge.sourceNodeId !== nodeIdToDelete && edge.targetNodeId !== nodeIdToDelete);
     setEdges(updatedEdges);
     saveEdgesToLocalStorage(updatedEdges);
@@ -574,7 +549,7 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); // Prevent default touch actions like scrolling
+    if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); 
 
     const point = 'touches' in event ? event.touches[0] : event;
     setActiveInteractionNodeId(node.id);
@@ -586,21 +561,18 @@ export default function Home() {
         y: worldMousePos.y - node.y
     });
 
-    // Reset interaction flags
     setIsDraggingForReposition(false);
     setIsLinkingModeActive(false);
     setLinkingSourceNodeId(null);
     setLinkingLinePreview(null);
 
-    // Start press-hold timer
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
     const timer = setTimeout(() => {
-      // Check if still interacting with the same node and no significant drag has occurred
       if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
       }
-      setPressHoldTimer(null); // Clear timer once executed or cancelled
+      setPressHoldTimer(null); 
     }, PRESS_HOLD_THRESHOLD);
     setPressHoldTimer(timer);
   };
@@ -611,23 +583,21 @@ export default function Home() {
       if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
 
       const point = 'touches' in event ? event.touches[0] : event;
-      if (!point) return; // Should not happen if interaction started
+      if (!point) return; 
 
       const worldMousePos = screenToWorld(point.clientX, point.clientY);
 
       const screenDx = point.clientX - interactionStartPos.x;
       const screenDy = point.clientY - interactionStartPos.y;
 
-      // If drag distance exceeds threshold, consider it a drag
       if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
-        if (pressHoldTimer) { // If dragging starts, cancel press-hold
+        if (pressHoldTimer) { 
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
 
         if (isLinkingModeActive && linkingSourceNodeId) {
-          // If linking mode is active, update the preview line
-          setIsDraggingForReposition(false); // Not repositioning if we are linking
+          setIsDraggingForReposition(false); 
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if (sourceNode) {
             const sourceDim = getNodeDimension(sourceNode);
@@ -639,13 +609,11 @@ export default function Home() {
             });
           }
         } else {
-          // If not linking, then it's a reposition drag
           setIsDraggingForReposition(true);
           setNodes(prevNodes => prevNodes.map(n => {
             if (n.id === activeInteractionNodeId) {
               let newX = worldMousePos.x - dragOffset.x;
               let newY = worldMousePos.y - dragOffset.y;
-              // No boundary checks here, pan limits will handle visibility
               return { ...n, x: newX, y: newY };
             }
             return n;
@@ -661,10 +629,7 @@ export default function Home() {
       }
 
       const point = 'changedTouches' in event ? event.changedTouches[0] : event;
-       // Ensure point exists, otherwise, we can't determine release position
        if (!point || !containerRef.current) {
-         // If critical info is missing, reset interaction states cautiously.
-         // Only reset activeInteractionNodeId if no dialogs are expected to be open from this interaction
          if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
         setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
         setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
@@ -674,25 +639,41 @@ export default function Home() {
       const worldMouseReleasePos = screenToWorld(point.clientX, point.clientY);
       let targetNodeUnderneath: Node | null = null;
 
-      // Check if released over another node (excluding the source of a link or the dragged node itself)
+      // Iterate over nodes to find if the release point is over any node
+      // that is NOT the node currently being interacted with.
       for (const node of nodes) {
-        if (node.id === activeInteractionNodeId && isLinkingModeActive) continue; // Don't target self when linking
-        // if (node.id === activeInteractionNodeId && isDraggingForReposition) continue; // Can't drop on self for new edge
+        // If the current node in the loop is the one being dragged/interacted with, skip it.
+        // We are looking for a *different* node to drop onto or link to.
+        if (node.id === activeInteractionNodeId) {
+          continue;
+        }
+
         const nodeDim = getNodeDimension(node);
-        if (worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
-            worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim) {
-            if(node.id !== linkingSourceNodeId) { // Ensure target is not the linking source
-              targetNodeUnderneath = node;
-              break;
-            }
+        if (
+          worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
+          worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim
+        ) {
+          // A potential target node is found under the cursor, and it's not the active node.
+          // If in linking mode, an additional check might be needed if linkingSourceNodeId
+          // could differ from activeInteractionNodeId.
+          // However, activeInteractionNodeId is usually the linkingSourceNodeId in linking mode.
+          if (isLinkingModeActive && linkingSourceNodeId && node.id === linkingSourceNodeId) {
+            // This case is unlikely if activeInteractionNodeId is correctly set as linkingSourceNodeId,
+            // as it would be caught by the `node.id === activeInteractionNodeId` check above.
+            // This is a safeguard for linking mode specifically.
+            continue;
+          }
+          
+          targetNodeUnderneath = node;
+          break; // Found a suitable, different node
         }
       }
 
 
-      if (linkingLinePreview && linkingSourceNodeId) { // Case 1: Linking gesture was active and moved
+      if (linkingLinePreview && linkingSourceNodeId) { 
         const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
-        if(sourceNode){ // Should always find sourceNode
-            if (targetNodeUnderneath) { // Dropped on another node
+        if(sourceNode){ 
+            if (targetNodeUnderneath) { 
                 const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
                 if (existingEdge) {
                     setEditingEdge(existingEdge);
@@ -704,11 +685,10 @@ export default function Home() {
                     setNewEdgeTagsInput("");
                     setIsCreateEdgeDialogOpen(true);
                 }
-            } else { // Dropped in empty space while linking - move source node
+            } else { 
                 const updatedNodes = nodes.map(n => {
                     if (n.id === linkingSourceNodeId) {
                         const nodeDim = getNodeDimension(n);
-                        // Use dragOffset which was set at interaction start relative to node's corner
                         let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
                         let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
                         return { ...n, x: newX, y: newY };
@@ -716,12 +696,12 @@ export default function Home() {
                     return n;
                 });
                 setNodes(updatedNodes);
-                saveNodesToLocalStorage(updatedNodes); // Save node position change
+                saveNodesToLocalStorage(updatedNodes); 
             }
         }
-      } else if (isDraggingForReposition) { // Case 2: Node was being dragged for repositioning
-        const draggedNodeId = activeInteractionNodeId; // Should be valid
-        if (draggedNodeId && targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { // Dropped on another node
+      } else if (isDraggingForReposition) { 
+        const draggedNodeId = activeInteractionNodeId; 
+        if (draggedNodeId && targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
             const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
             if (existingEdge) {
                 setEditingEdge(existingEdge);
@@ -734,23 +714,18 @@ export default function Home() {
                 setIsCreateEdgeDialogOpen(true);
             }
         }
-        // Always save nodes after repositioning drag, as positions might have changed
         saveNodesToLocalStorage(nodes); 
 
-      } else if (isLinkingModeActive && activeInteractionNodeId) { // Case 3: Press-hold completed, but no drag (or very little)
-        // This implies it was a press-hold-release.
+      } else if (isLinkingModeActive && activeInteractionNodeId) { 
         setShowSearchBar(true);
-      } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { // Case 4: Simple click/tap
+      } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
 
-      // Reset activeInteractionNodeId only if no dialog is meant to be open OR search bar is not shown
-      // This prevents dialogs from closing prematurely if activeInteractionNodeId is reset too soon.
       if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !showSearchBar) {
          setActiveInteractionNodeId(null);
       }
-      // Always reset other interaction states
       setInteractionStartPos(null);
       setDragOffset(null);
       setIsDraggingForReposition(false);
@@ -760,10 +735,9 @@ export default function Home() {
     };
 
     const currentContainer = containerRef.current;
-    // Add global listeners for move and end
     window.addEventListener('mousemove', handleInteractionMove);
     window.addEventListener('mouseup', handleInteractionEnd);
-    if (currentContainer) { // Add touch listeners to the container to manage touch events within it
+    if (currentContainer) { 
         currentContainer.addEventListener('touchmove', handleInteractionMove, { passive: false });
         currentContainer.addEventListener('touchend', handleInteractionEnd);
     }
@@ -777,17 +751,13 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  // Dependencies need to be carefully managed.
-  // screenToWorld, findExistingEdge, openEditNodeDialog, getNodeDimension are memoized and stable.
-  // nodes, edges, scale, offsetX, offsetY states will cause re-evaluation when they change.
-  // Interaction states (activeInteractionNodeId, etc.) are critical.
   }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY, saveNodesToLocalStorage, saveEdgesToLocalStorage]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
     if (currentNodes.length < 2 || containerWidth === 0) return currentNodes;
 
-    let newNodes = currentNodes.map(n => ({ ...n })); // Create a mutable copy
+    let newNodes = currentNodes.map(n => ({ ...n })); 
 
     for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
       let systemMoved = false;
@@ -915,7 +885,6 @@ export default function Home() {
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
       <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">Node Weaver</h1>
 
-      {/* Control Sliders */}
       <div className="w-full max-w-3xl flex flex-col items-center gap-4 mb-4">
         <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
             <Label htmlFor="scale-slider" className="text-sm text-right">Zoom: {isClient ? Math.round(scale * 100) : 100}%</Label>
@@ -939,7 +908,7 @@ export default function Home() {
                 value={[offsetX]}
                 onValueChange={(value) => setOffsetX(value[0])}
                 className="col-span-2"
-                disabled={panXSliderLimits.min >= panXSliderLimits.max} // Disable if content fits viewport
+                disabled={panXSliderLimits.min >= panXSliderLimits.max} 
             />
         </div>
          <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
@@ -952,18 +921,16 @@ export default function Home() {
                 value={[offsetY]}
                 onValueChange={(value) => setOffsetY(value[0])}
                 className="col-span-2"
-                disabled={panYSliderLimits.min >= panYSliderLimits.max} // Disable if content fits viewport
+                disabled={panYSliderLimits.min >= panYSliderLimits.max} 
             />
         </div>
       </div>
 
-      {/* Main Node Container */}
       <div
         ref={containerRef}
         className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden"
         style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
       >
-        {/* Grid SVG - Fixed to screen, drawn underneath transformed content */}
         <svg
           className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
           aria-hidden="true"
@@ -985,7 +952,7 @@ export default function Home() {
               key={`h-screen-${index}-${lineY}`}
               x1={0}
               y1={lineY}
-              x2={containerWidth} // Use dynamic containerWidth for horizontal line length
+              x2={containerWidth} 
               y2={lineY}
               stroke="hsl(var(--border))"
               strokeWidth={0.5}
@@ -994,7 +961,6 @@ export default function Home() {
           ))}
         </svg>
         
-        {/* Transformed Content (Nodes and Edges) */}
         <div
           ref={transformedContentRef}
           style={{
@@ -1006,7 +972,6 @@ export default function Home() {
             zIndex: 2, 
           }}
         >
-          {/* Edges SVG - Uses world coordinates, transformed by parent div */}
           <svg
             className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-visible"
           >
@@ -1026,12 +991,11 @@ export default function Home() {
                   x2={targetNode.x + targetDim / 2}
                   y2={targetNode.y + targetDim / 2}
                   stroke="hsl(var(--ring))"
-                  strokeWidth={2 / scale} // Maintain visual thickness
+                  strokeWidth={2 / scale} 
                   opacity="0.6"
                 />
               );
             })}
-            {/* Linking preview line */}
             {linkingLinePreview && (
               <line
                 x1={linkingLinePreview.x1}
@@ -1039,19 +1003,18 @@ export default function Home() {
                 x2={linkingLinePreview.x2}
                 y2={linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
-                strokeWidth={2 / scale} // Maintain visual thickness
-                strokeDasharray={`${5/scale},${5/scale}`} // Scale dash array
+                strokeWidth={2 / scale} 
+                strokeDasharray={`${5/scale},${5/scale}`} 
               />
             )}
           </svg>
 
-          {/* Nodes - Positioned with world coordinates, transformed by parent div */}
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
             const nodeStyles: React.CSSProperties = {
               position: 'absolute',
-              left: `${node.x}px`, // World coordinate
-              top: `${node.y}px`,  // World coordinate
+              left: `${node.x}px`, 
+              top: `${node.y}px`,  
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))", 
@@ -1118,7 +1081,6 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Search Bar - Appears at bottom */}
       {showSearchBar && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-50 p-1 bg-background/80 backdrop-blur-sm rounded-lg shadow-2xl border border-border">
           <div className="relative p-3">
@@ -1146,7 +1108,6 @@ export default function Home() {
         </div>
       )}
       
-      {/* Action Buttons */}
       <div className="mt-8 flex gap-4">
         <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
             setIsCreateNodeDialogOpen(isOpen);
@@ -1204,7 +1165,6 @@ export default function Home() {
       </div>
 
 
-      {/* Edit Node Dialog */}
       {editingNode && (
         <Dialog open={isEditNodeDialogOpen} onOpenChange={(isOpen) => {
             setIsEditNodeDialogOpen(isOpen);
@@ -1254,7 +1214,6 @@ export default function Home() {
         </Dialog>
       )}
 
-      {/* Create Edge Dialog */}
       <Dialog open={isCreateEdgeDialogOpen} onOpenChange={(isOpen) => {
           setIsCreateEdgeDialogOpen(isOpen);
           if (!isOpen) {
@@ -1290,7 +1249,6 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Edge Dialog */}
       {editingEdge && (
         <Dialog open={isEditEdgeDialogOpen} onOpenChange={(isOpen) => {
             setIsEditEdgeDialogOpen(isOpen);
@@ -1336,4 +1294,3 @@ export default function Home() {
     </main>
   );
 }
-
