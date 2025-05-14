@@ -26,12 +26,14 @@ interface Node {
   x: number;
   y: number;
   type: 'category' | 'entity';
-  birthday?: string; 
+  birthday?: string;
 }
 
-const NODE_WIDTH = 144; // w-36
-const NODE_HEIGHT = 144; // h-36
-const CONTAINER_MAX_WIDTH_PX = 768; 
+const BASE_NODE_WIDTH = 144; // Used for initial placement logic, w-36
+const CATEGORY_NODE_SIZE_CLASS = "w-40 h-40"; // 160px
+const ENTITY_NODE_SIZE_CLASS = "w-32 h-32"; // 128px
+
+const CONTAINER_MAX_WIDTH_PX = 768;
 const CONTAINER_HEIGHT_PX = 500;
 
 const PRESS_HOLD_THRESHOLD = 700; // ms for press and hold
@@ -39,7 +41,7 @@ const DRAG_MOVE_THRESHOLD = 10; // pixels to differentiate click from drag
 
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
-  
+
   // Create Node Dialog
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -72,8 +74,8 @@ export default function Home() {
         name: newNodeName,
         description: newNodeDescription,
         tags: tagsArray,
-        x: Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - NODE_WIDTH)),
-        y: Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - NODE_HEIGHT)),
+        x: Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - BASE_NODE_WIDTH)), // Use base width for placement
+        y: Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - BASE_NODE_WIDTH)), // Use base height for placement
         type: newNodeType,
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
@@ -92,23 +94,23 @@ export default function Home() {
     setEditNodeName(node.name);
     setEditNodeDescription(node.description);
     setEditNodeTags(node.tags.join(', '));
-    setEditNodeBirthday(node.birthday || ""); 
+    setEditNodeBirthday(node.birthday || "");
     setIsEditDialogOpen(true);
-    setActiveNodeInteraction(null); // Ensure interaction state is cleared
-  }, []); // Dependencies are stable setState functions
+    setActiveNodeInteraction(null); 
+  }, []); 
 
   const saveNodeChanges = () => {
     if (editingNode && editNodeName) {
       const tagsArray = editNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      setNodes(nodes.map(n => 
-        n.id === editingNode.id 
-        ? { 
-            ...n, 
-            name: editNodeName, 
-            description: editNodeDescription, 
+      setNodes(nodes.map(n =>
+        n.id === editingNode.id
+        ? {
+            ...n,
+            name: editNodeName,
+            description: editNodeDescription,
             tags: tagsArray,
-            birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined 
-          } 
+            birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined
+          }
         : n
       ));
       setEditingNode(null);
@@ -120,7 +122,6 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    // Prevent default for touch to avoid scrolling/zooming
     if (event.type.startsWith('touch')) {
       event.preventDefault();
     }
@@ -128,18 +129,15 @@ export default function Home() {
     setActiveNodeInteraction(node.id);
     const point = 'touches' in event ? event.touches[0] : event;
     setInteractionStartPos({ x: point.clientX, y: point.clientY });
-    setIsDragging(false); 
+    setIsDragging(false); // Reset dragging state at the start of interaction
 
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
-    
+
     const timer = setTimeout(() => {
-      // Check if the interaction is still on the same node and not dragged away
-      // And that the search bar isn't already shown from this interaction sequence
-      if (activeNodeInteraction === node.id && !isDragging && !showSearchBar) { 
+      if (activeNodeInteraction === node.id && !isDragging && !showSearchBar) {
         setShowSearchBar(true);
-        setPressHoldTimer(null); // Timer has fired
-        setActiveNodeInteraction(null); // Interaction type determined (press-hold)
-        console.log("Press hold detected for node:", node.id);
+        setPressHoldTimer(null);
+        // activeNodeInteraction is intentionally not cleared here; search bar might need context
       }
     }, PRESS_HOLD_THRESHOLD);
     setPressHoldTimer(timer);
@@ -151,7 +149,7 @@ export default function Home() {
       if (!activeNodeInteraction || !interactionStartPos) return;
 
       const point = 'touches' in event ? event.touches[0] : event;
-      if (!point) return; // Touch event might end with no touches
+      if (!point) return; 
 
       const dx = Math.abs(point.clientX - interactionStartPos.x);
       const dy = Math.abs(point.clientY - interactionStartPos.y);
@@ -162,7 +160,7 @@ export default function Home() {
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
-        // console.log("Dragging node:", activeNodeInteraction); // Future: Implement node dragging logic here
+        // Future: Implement node dragging logic (repositioning) here
       }
     };
 
@@ -172,27 +170,29 @@ export default function Home() {
         setPressHoldTimer(null);
       }
 
-      // If an interaction was active, it wasn't a drag, and search bar wasn't shown (i.e., press-hold didn't complete)
       if (activeNodeInteraction && !isDragging && !showSearchBar) {
         const node = nodes.find(n => n.id === activeNodeInteraction);
         if (node) {
           openEditDialog(node);
-          // console.log("Click/Tap detected for node:", activeNodeInteraction);
         }
       }
       
-      // Reset interaction states
-      // Do not reset showSearchBar here, it's reset by its own close mechanism or if another interaction starts
-      if (!showSearchBar) { // Only reset activeNodeInteraction if search bar isn't the result
-         setActiveNodeInteraction(null);
+      // Reset interaction states appropriately
+      if (showSearchBar) {
+        // If search bar was shown, press-hold was successful.
+        // activeNodeInteraction is kept for the search bar context. It's cleared when search is used/closed.
+      } else {
+        // If search bar was NOT shown, it was either a click or a drag.
+        // In either case, the specific node interaction sequence is over for opening edit dialog.
+        setActiveNodeInteraction(null);
       }
       setInteractionStartPos(null);
-      setIsDragging(false);
+      setIsDragging(false); // Always reset dragging state at the end of an interaction sequence
     };
 
     window.addEventListener('mousemove', handleInteractionMove);
     window.addEventListener('mouseup', handleInteractionEnd);
-    window.addEventListener('touchmove', handleInteractionMove, { passive: false }); // passive: false for preventDefault
+    window.addEventListener('touchmove', handleInteractionMove, { passive: false });
     window.addEventListener('touchend', handleInteractionEnd);
 
     return () => {
@@ -214,60 +214,72 @@ export default function Home() {
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
       <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">Node Weaver</h1>
       
-      <div 
+      <div
         className="relative w-full max-w-4xl border rounded-lg shadow-inner bg-card"
         style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
       >
-        {isClient && nodes.map((node) => (
-          <div
-            key={node.id}
-            className="absolute w-36 h-36 p-3 rounded-full flex flex-col items-center justify-center text-center cursor-pointer shadow-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 select-none"
-            style={{ 
-              backgroundColor: "hsl(var(--node-color))",
-              left: `${node.x}px`,
-              top: `${node.y}px`,
-              color: "hsl(var(--card-foreground))",
-            }}
-            onMouseDown={(e) => handleNodeInteractionStart(e, node)}
-            onTouchStart={(e) => handleNodeInteractionStart(e, node)}
-            title={`Interact with ${node.name}`}
-          >
-            <h2 className="text-md font-semibold truncate w-full">{node.name}</h2>
-            <p className="text-xs capitalize text-black/70">{node.type}</p>
-            {node.tags.length > 0 && (
-              <div className="mt-1 flex flex-wrap justify-center gap-1">
-                {node.tags.slice(0, 2).map(tag => (
-                  <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-            {node.tags.length > 2 && (
-              <span className="text-xs mt-1 text-gray-600">+{node.tags.length - 2} more</span>
-            )}
-          </div>
-        ))}
+        {isClient && nodes.map((node) => {
+          const nodeSizeClass = node.type === 'category' ? CATEGORY_NODE_SIZE_CLASS : ENTITY_NODE_SIZE_CLASS;
+          const nodeStyles: React.CSSProperties = {
+            backgroundColor: "hsl(var(--node-color))",
+            left: `${node.x}px`,
+            top: `${node.y}px`,
+            color: "hsl(var(--card-foreground))",
+          };
+          if (node.type === 'entity') {
+            nodeStyles.borderColor = 'hsl(var(--ring))';
+            nodeStyles.borderWidth = '2px'; // Or '3px' for more emphasis
+          }
+
+          return (
+            <div
+              key={node.id}
+              className={`absolute ${nodeSizeClass} p-3 rounded-full flex flex-col items-center justify-center text-center cursor-pointer shadow-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 select-none border`}
+              style={nodeStyles}
+              onMouseDown={(e) => handleNodeInteractionStart(e, node)}
+              onTouchStart={(e) => handleNodeInteractionStart(e, node)}
+              title={`Interact with ${node.name}`}
+            >
+              <h2 className="text-md font-semibold truncate w-full">{node.name}</h2>
+              {/* Type display removed as per request */}
+              {node.tags.length > 0 && (
+                <div className="mt-1 flex flex-wrap justify-center gap-1">
+                  {node.tags.slice(0, 2).map(tag => (
+                    <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {node.tags.length > 2 && (
+                <span className="text-xs mt-1 opacity-70">+{node.tags.length - 2} more</span>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {showSearchBar && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-50 p-1 bg-background/80 backdrop-blur-sm rounded-lg shadow-2xl border border-border">
           <div className="relative p-3">
-            <Input 
-              placeholder="Search nodes or type to connect..." 
-              className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary" 
-              onFocus={() => { // If search bar is focused, ensure node interaction is cleared
-                setActiveNodeInteraction(null);
+            <Input
+              placeholder="Search nodes or type to connect..."
+              className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
+              onFocus={() => { 
+                // If search bar is focused, ensure node interaction that triggered it is conceptually over
+                // but activeNodeInteraction might still be useful for search context if needed later.
+                // For now, clearing timer is key.
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
+                // Consider if setActiveNodeInteraction(null) is needed here or handled by search logic
               }}
             />
-            <Button 
+            <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveNodeInteraction(null); // Clear any lingering interaction state
-              }} 
-              variant="ghost" 
-              size="sm" 
+                setActiveNodeInteraction(null); // Clear any lingering interaction state when search is closed
+              }}
+              variant="ghost"
+              size="sm"
               className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground hover:text-foreground h-8 w-8 p-0"
               aria-label="Close search bar"
             >
@@ -279,7 +291,7 @@ export default function Home() {
 
       <Dialog open={isCreateDialogOpen} onOpenChange={(isOpen) => {
           setIsCreateDialogOpen(isOpen);
-          if (!isOpen) setActiveNodeInteraction(null); // Clear interaction if dialog closes
+          if (!isOpen) setActiveNodeInteraction(null); 
       }}>
         <DialogTrigger asChild>
           <Button className="mt-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
@@ -369,8 +381,8 @@ export default function Home() {
         <Dialog open={isEditDialogOpen} onOpenChange={(isOpen) => {
             setIsEditDialogOpen(isOpen);
             if (!isOpen) {
-                setEditingNode(null); // Clear editing node when dialog closes
-                setActiveNodeInteraction(null); 
+                setEditingNode(null); 
+                setActiveNodeInteraction(null);
             }
         }}>
           <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
@@ -429,7 +441,7 @@ export default function Home() {
             <DialogFooter>
               <DialogClose asChild>
                  <Button variant="outline" onClick={() => {
-                     setIsEditDialogOpen(false); 
+                     setIsEditDialogOpen(false);
                      setEditingNode(null);
                      setActiveNodeInteraction(null);
                     }} className="text-md px-5 py-2.5">Cancel</Button>
@@ -445,3 +457,4 @@ export default function Home() {
   );
 }
 
+    
