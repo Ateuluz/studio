@@ -223,7 +223,7 @@ export default function Home() {
   }, []);
   
  const loadDataFromLocalStorage = useCallback(() => {
-    if (typeof window === 'undefined') return; // Ensure localStorage is available
+    if (typeof window === 'undefined') return; 
 
     let loadedNodes: Node[] = [];
     let loadedEdges: Edge[] = [];
@@ -235,6 +235,7 @@ export default function Home() {
           loadedNodes = JSON.parse(storedNodesString) as Node[];
         } catch (e) {
           console.error("Error parsing nodes from localStorage:", e);
+          loadedNodes = []; // Reset to empty array on error
         }
       }
 
@@ -244,6 +245,7 @@ export default function Home() {
           loadedEdges = JSON.parse(storedEdgesString) as Edge[];
         } catch (e) {
           console.error("Error parsing edges from localStorage:", e);
+          loadedEdges = []; // Reset to empty array on error
         }
       }
     } catch (error) {
@@ -256,32 +258,35 @@ export default function Home() {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
 
-        if (deltaX !== 0 || deltaY !== 0) { // Only adjust if not already at origin
-          const adjustedNodes = loadedNodes.map(node => ({
+        let adjustedNodes = loadedNodes;
+        if (deltaX !== 0 || deltaY !== 0) { 
+          adjustedNodes = loadedNodes.map(node => ({
             ...node,
             x: node.x + deltaX,
             y: node.y + deltaY,
           }));
           setNodes(adjustedNodes);
-          saveNodesToLocalStorage(adjustedNodes); // Persist the adjusted positions
+          saveNodesToLocalStorage(adjustedNodes); 
         } else {
           setNodes(loadedNodes);
         }
         
-        // Center viewport on the Main node (now at 0,0)
+        const mainNodeAfterAdjustment = adjustedNodes.find(n => n.id === mainNode.id) || mainNode;
+        const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
+        
         if (containerWidth > 0) {
-          setOffsetX(containerWidth / 2);
-          setOffsetY(CONTAINER_HEIGHT_PX / 2);
+          setOffsetX((containerWidth / 2) - (mainNodeDimension / 2) * scale);
+          setOffsetY((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale);
         }
       } else {
         setNodes(loadedNodes);
       }
     } else {
-      setNodes([]); // Ensure nodes state is an empty array if nothing loaded
+      setNodes([]); 
     }
     setEdges(loadedEdges);
 
-  }, [containerWidth, saveNodesToLocalStorage, setNodes, setEdges, setOffsetX, setOffsetY]);
+  }, [containerWidth, saveNodesToLocalStorage, getNodeDimension, scale, setNodes, setEdges, setOffsetX, setOffsetY]);
 
 
   useEffect(() => {
@@ -670,7 +675,7 @@ export default function Home() {
       let targetNodeUnderneath: Node | null = null;
 
       for (const node of nodes) {
-        if (node.id === activeInteractionNodeId) {
+        if (node.id === activeInteractionNodeId) { // Skip the node being dragged
           continue;
         }
 
@@ -679,10 +684,6 @@ export default function Home() {
           worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
           worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim
         ) {
-          if (isLinkingModeActive && linkingSourceNodeId && node.id === linkingSourceNodeId) {
-            continue;
-          }
-          
           targetNodeUnderneath = node;
           break; 
         }
