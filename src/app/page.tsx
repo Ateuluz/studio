@@ -229,8 +229,7 @@ export default function Home() {
           loadedNodes = []; 
         }
       }
-      setNodes(loadedNodes);
-
+     
       const storedEdgesString = localStorage.getItem(EDGES_KEY);
       let loadedEdges: Edge[] = [];
       if (storedEdgesString) {
@@ -241,6 +240,27 @@ export default function Home() {
           loadedEdges = [];
         }
       }
+      
+      if (loadedNodes.length > 0 && containerWidth > 0) {
+        const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
+        if (mainNode) {
+            const deltaX = -mainNode.x;
+            const deltaY = -mainNode.y;
+            const adjustedNodes = loadedNodes.map(n => ({
+                ...n,
+                x: n.x + deltaX,
+                y: n.y + deltaY,
+            }));
+            setNodes(adjustedNodes);
+            saveNodesToLocalStorage(adjustedNodes); 
+            setOffsetX(containerWidth / 2);
+            setOffsetY(CONTAINER_HEIGHT_PX / 2);
+        } else {
+            setNodes(loadedNodes);
+        }
+      } else {
+         setNodes(loadedNodes);
+      }
       setEdges(loadedEdges);
 
     } catch (error) {
@@ -248,7 +268,7 @@ export default function Home() {
       setNodes([]); 
       setEdges([]);
     }
-  }, [saveNodesToLocalStorage, saveEdgesToLocalStorage]);
+  }, [containerWidth, saveNodesToLocalStorage]);
 
 
   useEffect(() => {
@@ -727,7 +747,7 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-          if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
+           if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
               continue; 
           }
 
@@ -833,11 +853,20 @@ export default function Home() {
   const maxScale = 1.5;
 
   const screenGridData = useMemo(() => {
-    if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0) {
+    if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0 || scale === 0) {
       return { verticalLines: [], horizontalLines: [] };
     }
     return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
   }, [isClient, offsetX, offsetY, scale, containerWidth]);
+
+  const worldViewBox = useMemo(() => {
+    if (scale === 0 || containerWidth === 0) return { x: 0, y: 0, width: 0, height: 0 };
+    const x = -offsetX / scale;
+    const y = -offsetY / scale;
+    const width = containerWidth / scale;
+    const height = CONTAINER_HEIGHT_PX / scale;
+    return { x, y, width, height };
+  }, [offsetX, offsetY, scale, containerWidth]);
 
 
   return (
@@ -930,12 +959,14 @@ export default function Home() {
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
             transformOrigin: '0 0',
             willChange: 'transform', 
-            zIndex: 2, // Ensure content is above grid
+            zIndex: 2, 
           }}
         >
           {/* Edges SVG - IS transformed, draws in world space */}
           <svg
             className="absolute top-0 left-0 w-full h-full pointer-events-none" 
+            viewBox={isClient ? `${worldViewBox.x} ${worldViewBox.y} ${worldViewBox.width} ${worldViewBox.height}` : undefined}
+            preserveAspectRatio="none"
           >
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
@@ -1250,3 +1281,5 @@ export default function Home() {
     </main>
   );
 }
+
+    
