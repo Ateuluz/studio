@@ -40,7 +40,7 @@ interface Edge {
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
 
-const CONTAINER_MAX_WIDTH_PX = 768;
+// const CONTAINER_MAX_WIDTH_PX = 768; // Removed
 const CONTAINER_HEIGHT_PX = 500;
 
 const PRESS_HOLD_THRESHOLD = 700;
@@ -48,14 +48,15 @@ const DRAG_MOVE_THRESHOLD = 10;
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
 // Constants for repulsion
-const REPULSION_STRENGTH = 0.5; 
-const MIN_SEPARATION = 15;      
+const REPULSION_STRENGTH = 0.5;
+const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(768); // Default, will be updated
 
   // Create Node Dialog
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
@@ -94,6 +95,20 @@ export default function Home() {
 
   const [showSearchBar, setShowSearchBar] = useState(false);
 
+  useEffect(() => {
+    if (containerRef.current) {
+      setContainerWidth(containerRef.current.getBoundingClientRect().width);
+    }
+    // Optional: Add resize listener for fully dynamic resizing
+    // const handleResize = () => {
+    //   if (containerRef.current) {
+    //     setContainerWidth(containerRef.current.getBoundingClientRect().width);
+    //   }
+    // };
+    // window.addEventListener('resize', handleResize);
+    // return () => window.removeEventListener('resize', handleResize);
+  }, [containerRef]);
+
 
   const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
     const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
@@ -110,7 +125,7 @@ export default function Home() {
       const newNodeDimension = getNodeDimension(newNodeType);
 
       do {
-        newNodeX = Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - newNodeDimension));
+        newNodeX = Math.floor(Math.random() * (containerWidth - newNodeDimension));
         newNodeY = Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - newNodeDimension));
         let overlap = false;
         for (const existingNode of nodes) {
@@ -156,7 +171,7 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null); 
+    setActiveInteractionNodeId(null);
   }, []);
 
   const saveNodeChanges = () => {
@@ -269,7 +284,7 @@ export default function Home() {
               let newX = relativeCursorX - dragOffset.x;
               let newY = relativeCursorY - dragOffset.y;
 
-              newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
+              newX = Math.max(0, Math.min(newX, containerWidth - nodeDim));
               newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
               return { ...n, x: newX, y: newY };
             }
@@ -320,7 +335,7 @@ export default function Home() {
                 let newX = (point.clientX - containerRect.left) - (dragOffset?.x || 0) ;
                 let newY = (point.clientY - containerRect.top) - (dragOffset?.y || 0);
 
-                newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
+                newX = Math.max(0, Math.min(newX, containerWidth - nodeDim));
                 newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
                 setNodes(prevNodes => prevNodes.map(n => n.id === linkingSourceNodeId ? {...n, x: newX, y: newY} : n));
             }
@@ -387,13 +402,13 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, edges, getNodeDimension]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, edges, getNodeDimension, containerWidth]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
     if (currentNodes.length < 2) return currentNodes;
 
-    let newNodes = currentNodes.map(n => ({ ...n })); 
+    let newNodes = currentNodes.map(n => ({ ...n }));
 
     for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
       let systemMoved = false;
@@ -401,6 +416,22 @@ export default function Home() {
         for (let j = i + 1; j < newNodes.length; j++) {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
+
+          // If either node is the fixedNodeId (being interacted with), it should not exert repulsion.
+          // This allows the user to drag a node "through" others or close to others for linking
+          // without the target node being pushed away by the dragged node.
+          if (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId) {
+            // However, if nodeA is fixed, nodeB should still be repelled by nodeA if nodeB is NOT fixed.
+            // And vice-versa. But if BOTH are fixed (which shouldn't happen if fixedNodeId is singular) or
+            // if the non-fixed node is being repelled by a fixed one, we need to handle that.
+            // The current logic: if nodeA is fixed, nodeB (not fixed) moves. If nodeB is fixed, nodeA (not fixed) moves.
+            // If neither is fixed, both move. This seems okay.
+            // The constraint is that the fixedNodeId itself is not *moved* by repulsion,
+            // but it *can* repel non-fixed nodes.
+            // Let's refine: if one of the nodes is the fixedNodeId, it doesn't get pushed.
+            // The other node gets pushed by the full force.
+            // If the fixedNodeId is the one *exerting* the force, this is handled by checking if the node to be moved is fixed.
+          }
 
           const dimA = getNodeDimension(nodeA);
           const dimB = getNodeDimension(nodeB);
@@ -420,54 +451,68 @@ export default function Home() {
           const targetSeparationSquared = targetSeparation * targetSeparation;
 
           if (distanceSquared < targetSeparationSquared && distanceSquared > 0) {
-            const distance = Math.sqrt(distanceSquared); 
+            const distance = Math.sqrt(distanceSquared);
             const overlap = targetSeparation - distance;
             const forceMagnitude = overlap * REPULSION_STRENGTH;
             const normDx = dx / distance;
             const normDy = dy / distance;
 
-            // If either node is the fixedNodeId, no repulsion force is applied by this pair.
-            // This prevents the selected node from pushing others, aiding edge creation.
-            if (nodeA.id !== fixedNodeId && nodeB.id !== fixedNodeId) {
-                const moveAx = -normDx * forceMagnitude / 2;
-                const moveAy = -normDy * forceMagnitude / 2;
-                const moveBx = normDx * forceMagnitude / 2;
-                const moveBy = normDy * forceMagnitude / 2;
+            let moveAx = 0, moveAy = 0, moveBx = 0, moveBy = 0;
 
-                // Apply movement to nodeA (which is not fixedNodeId here)
+            if (nodeA.id !== fixedNodeId && nodeB.id !== fixedNodeId) {
+                // Both nodes are not fixed, they share the movement
+                moveAx = -normDx * forceMagnitude / 2;
+                moveAy = -normDy * forceMagnitude / 2;
+                moveBx = normDx * forceMagnitude / 2;
+                moveBy = normDy * forceMagnitude / 2;
+            } else if (nodeA.id !== fixedNodeId && nodeB.id === fixedNodeId) {
+                // Node B is fixed, only Node A moves (by the full force)
+                moveAx = -normDx * forceMagnitude;
+                moveAy = -normDy * forceMagnitude;
+            } else if (nodeA.id === fixedNodeId && nodeB.id !== fixedNodeId) {
+                // Node A is fixed, only Node B moves (by the full force)
+                moveBx = normDx * forceMagnitude;
+                moveBy = normDy * forceMagnitude;
+            }
+            // If both are fixed (nodeA.id === fixedNodeId && nodeB.id === fixedNodeId), no movement.
+            // This case implies fixedNodeId might be an array or a different logic,
+            // but with a single fixedNodeId, this specific sub-condition is effectively covered.
+
+            if (nodeA.id !== fixedNodeId) {
                 const prevXA = nodeA.x;
                 const prevYA = nodeA.y;
                 nodeA.x += moveAx;
                 nodeA.y += moveAy;
-                nodeA.x = Math.max(0, Math.min(nodeA.x, CONTAINER_MAX_WIDTH_PX - dimA));
+                nodeA.x = Math.max(0, Math.min(nodeA.x, containerWidth - dimA));
                 nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
                 if (nodeA.x !== prevXA || nodeA.y !== prevYA) systemMoved = true;
+            }
 
-                // Apply movement to nodeB (which is not fixedNodeId here)
+            if (nodeB.id !== fixedNodeId) {
                 const prevXB = nodeB.x;
                 const prevYB = nodeB.y;
                 nodeB.x += moveBx;
                 nodeB.y += moveBy;
-                nodeB.x = Math.max(0, Math.min(nodeB.x, CONTAINER_MAX_WIDTH_PX - dimB));
+                nodeB.x = Math.max(0, Math.min(nodeB.x, containerWidth - dimB));
                 nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
                 if (nodeB.x !== prevXB || nodeB.y !== prevYB) systemMoved = true;
             }
           }
         }
       }
-      if (!systemMoved && iter > 0) break; 
+      if (!systemMoved && iter > 0) break;
     }
     return newNodes;
-  }, [getNodeDimension]);
+  }, [getNodeDimension, containerWidth]);
 
 
   useEffect(() => {
-    if (nodes.length < 2) return;
-    
+    if (nodes.length < 2 || containerWidth === 0) return; // Also wait for containerWidth to be set
+
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
 
     let changed = false;
-    if (nodes.length === repulsedNodes.length) { 
+    if (nodes.length === repulsedNodes.length) {
         for (let i = 0; i < nodes.length; i++) {
             if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
                 changed = true;
@@ -475,7 +520,7 @@ export default function Home() {
             }
         }
     } else {
-        changed = true; 
+        changed = true;
     }
 
     if (changed) {
@@ -484,7 +529,7 @@ export default function Home() {
       }, 0);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -497,7 +542,7 @@ export default function Home() {
       <div
         ref={containerRef}
         className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none"
-        style={{ height: `${CONTAINER_HEIGHT_PX}px`, maxWidth: `${CONTAINER_MAX_WIDTH_PX}px` }}
+        style={{ height: `${CONTAINER_HEIGHT_PX}px` }} // Removed maxWidth here, Tailwind handles it
       >
         <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
           {isClient && edges.map(edge => {
@@ -543,7 +588,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
-            zIndex: 1, 
+            zIndex: 1,
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
@@ -590,7 +635,7 @@ export default function Home() {
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null); 
+                setActiveInteractionNodeId(null);
               }}
               variant="ghost"
               size="sm"
@@ -699,7 +744,7 @@ export default function Home() {
           if (!isOpen) {
             setNewEdgeDataSourceNodeId(null);
             setNewEdgeDataTargetNodeId(null);
-            setActiveInteractionNodeId(null); 
+            setActiveInteractionNodeId(null);
           }
       }}>
         <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
@@ -729,3 +774,4 @@ export default function Home() {
     </main>
   );
 }
+
