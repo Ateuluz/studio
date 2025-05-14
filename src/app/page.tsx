@@ -58,7 +58,7 @@ const REPULSION_STRENGTH = 0.5;
 const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
-const BASE_GRID_SIZE = 50; // World unit size for grid at scale 1
+const BASE_GRID_SIZE = 50; 
 
 // Helper function to determine grid line separation in WORLD units based on scale
 function getGridLineWorldSeparation(scale: number): number {
@@ -74,20 +74,19 @@ interface ScreenGridData {
 
 // Helper function to calculate SCREEN coordinates for grid lines
 function calculateScreenGridLinePositions(
-  offsetX: number, // current screen X-offset of the world origin
-  offsetY: number, // current screen Y-offset of the world origin
+  offsetX: number, 
+  offsetY: number, 
   scale: number,
-  containerWidth: number, // screen width of the display box
-  containerHeight: number // screen height of the display box
+  containerWidth: number, 
+  containerHeight: number 
 ): ScreenGridData {
   if (containerWidth <= 0 || containerHeight <= 0 || scale === 0) {
     return { verticalLines: [], horizontalLines: [] };
   }
 
-  const worldSeparation = getGridLineWorldSeparation(scale); // Separation in world units
-  const screenSeparation = worldSeparation * scale; // Corresponding separation in screen units
+  const worldSeparation = getGridLineWorldSeparation(scale); 
+  const screenSeparation = worldSeparation * scale; 
 
-  // Prevent grid from becoming too dense on screen, or if screenSeparation is invalid
   if (screenSeparation < 5 || !isFinite(screenSeparation)) { 
     return { verticalLines: [], horizontalLines: [] };
   }
@@ -95,26 +94,28 @@ function calculateScreenGridLinePositions(
   const verticalLines: number[] = [];
   const horizontalLines: number[] = [];
 
-  // Calculate vertical lines
-  const firstVerticalWorldLine_k = Math.floor((-offsetX / scale) / worldSeparation) -1; 
-  const lastVerticalWorldLine_k = Math.ceil(((containerWidth - offsetX) / scale) / worldSeparation) +1; 
+  const worldViewTopLeftX = -offsetX / scale;
+  const worldViewTopLeftY = -offsetY / scale;
+
+  const firstVerticalWorldLine_k = Math.floor(worldViewTopLeftX / worldSeparation);
+  const lastVerticalWorldLine_k = Math.ceil((worldViewTopLeftX + containerWidth / scale) / worldSeparation);
 
   for (let k = firstVerticalWorldLine_k; k <= lastVerticalWorldLine_k; k++) {
     const worldX = k * worldSeparation;
     const screenX = worldX * scale + offsetX;
-    if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) { 
-        verticalLines.push(screenX);
+    if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) {
+      verticalLines.push(screenX);
     }
   }
-  
-  const firstHorizontalWorldLine_k = Math.floor((-offsetY / scale) / worldSeparation) -1;
-  const lastHorizontalWorldLine_k = Math.ceil(((containerHeight - offsetY) / scale) / worldSeparation) +1;
 
+  const firstHorizontalWorldLine_k = Math.floor(worldViewTopLeftY / worldSeparation);
+  const lastHorizontalWorldLine_k = Math.ceil((worldViewTopLeftY + containerHeight / scale) / worldSeparation);
+  
   for (let k = firstHorizontalWorldLine_k; k <= lastHorizontalWorldLine_k; k++) {
     const worldY = k * worldSeparation;
     const screenY = worldY * scale + offsetY;
-     if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) { 
-        horizontalLines.push(screenY);
+    if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) {
+      horizontalLines.push(screenY);
     }
   }
   
@@ -277,9 +278,8 @@ export default function Home() {
     return { x: worldX, y: worldY };
   }, [offsetX, offsetY, scale]);
 
- useEffect(() => {
-    if (activeInteractionNodeId) return; 
-
+  useEffect(() => {
+    if (activeInteractionNodeId) return; // Do not adjust while user is interacting
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
     const nodesToConsider = nodes;
@@ -838,15 +838,17 @@ export default function Home() {
     }
     return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
   }, [isClient, offsetX, offsetY, scale, containerWidth]);
-
+  
   const worldViewBox = useMemo(() => {
-    if (scale === 0 || containerWidth === 0) return { x: 0, y: 0, width: 0, height: 0 };
+    if (!isClient || scale === 0 || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0) {
+        return { x: 0, y: 0, width: 0, height: 0 };
+    }
     const x = -offsetX / scale;
     const y = -offsetY / scale;
     const width = containerWidth / scale;
     const height = CONTAINER_HEIGHT_PX / scale;
     return { x, y, width, height };
-  }, [offsetX, offsetY, scale, containerWidth]);
+  }, [isClient, offsetX, offsetY, scale, containerWidth]);
 
 
   return (
@@ -945,6 +947,8 @@ export default function Home() {
           {/* Edges SVG - IS transformed, draws in world space */}
           <svg
             className="absolute top-0 left-0 w-full h-full pointer-events-none"
+            viewBox={isClient ? `${worldViewBox.x} ${worldViewBox.y} ${worldViewBox.width} ${worldViewBox.height}` : undefined}
+            preserveAspectRatio="none"
           >
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
