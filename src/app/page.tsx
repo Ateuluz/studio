@@ -45,7 +45,7 @@ interface Edge {
 
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
-const CONTAINER_HEIGHT_PX = 500; // This remains fixed for the "world" height
+const CONTAINER_HEIGHT_PX = 500; 
 
 const PRESS_HOLD_THRESHOLD = 700;
 const DRAG_MOVE_THRESHOLD = 10;
@@ -55,7 +55,7 @@ const REPULSION_STRENGTH = 0.5;
 const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
-const GRID_SIZE = 50; // For background grid, in world units
+const BASE_GRID_SIZE = 50; // Base size in world units
 
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
@@ -87,7 +87,7 @@ export default function Home() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformedContentRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(768); // Default, updated on mount
+  const [containerWidth, setContainerWidth] = useState(768); 
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -114,21 +114,23 @@ export default function Home() {
 
   const [activeInteractionNodeId, setActiveInteractionNodeId] = useState<string | null>(null);
   const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
-  const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null); // Screen coords
-  const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null); // World units offset from node origin
+  const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null); 
+  const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null); 
 
   const [isDraggingForReposition, setIsDraggingForReposition] = useState(false);
   const [isLinkingModeActive, setIsLinkingModeActive] = useState(false);
   const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null);
-  const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null); // World coords
+  const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
 
   const [showSearchBar, setShowSearchBar] = useState(false);
 
-  // Transformation state
   const [scale, setScale] = useState(1);
-  const [offsetX, setOffsetX] = useState(0); // Screen pixel offset for translation
-  const [offsetY, setOffsetY] = useState(0); // Screen pixel offset for translation
-  const [isFirstNodeCentered, setIsFirstNodeCentered] = useState(false);
+  const [offsetX, setOffsetX] = useState(0); 
+  const [offsetY, setOffsetY] = useState(0); 
+
+  const [panXSliderLimits, setPanXSliderLimits] = useState({ min: -500, max: 500 });
+  const [panYSliderLimits, setPanYSliderLimits] = useState({ min: -500, max: 500 });
+  const [effectiveGridSize, setEffectiveGridSize] = useState(BASE_GRID_SIZE);
 
   useEffect(() => {
     if (containerRef.current) {
@@ -156,6 +158,76 @@ export default function Home() {
     return { x: worldX, y: worldY };
   }, [offsetX, offsetY, scale]);
 
+  // Effect to calculate and update pan limits and effective grid size
+  useEffect(() => {
+    const nodesToConsider = activeInteractionNodeId 
+      ? nodes.filter(n => n.id !== activeInteractionNodeId) 
+      : nodes;
+
+    let contentMinX = 0, contentMaxX = 0, contentMinY = 0, contentMaxY = 0;
+
+    if (nodesToConsider.length > 0) {
+      contentMinX = Math.min(...nodesToConsider.map(n => n.x));
+      contentMaxX = Math.max(...nodesToConsider.map(n => n.x + getNodeDimension(n)));
+      contentMinY = Math.min(...nodesToConsider.map(n => n.y));
+      contentMaxY = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
+    } else {
+      // Default extent when no nodes or only the active node exists
+      contentMinX = 0;
+      contentMaxX = containerWidth / scale; 
+      contentMinY = 0;
+      contentMaxY = CONTAINER_HEIGHT_PX / scale;
+    }
+
+    const paddingXScreen = containerWidth / 2;
+    const paddingYScreen = CONTAINER_HEIGHT_PX / 2;
+
+    const contentScreenWidth = (contentMaxX - contentMinX) * scale;
+    const contentScreenHeight = (contentMaxY - contentMinY) * scale;
+
+    let newOffsetXMin, newOffsetXMax, newOffsetYMin, newOffsetYMax;
+    let targetOffsetX = offsetX, targetOffsetY = offsetY;
+
+    if (contentScreenWidth + 2 * paddingXScreen <= containerWidth) {
+      targetOffsetX = containerWidth / 2 - ((contentMinX + contentMaxX) / 2) * scale;
+      newOffsetXMin = targetOffsetX;
+      newOffsetXMax = targetOffsetX;
+    } else {
+      newOffsetXMin = containerWidth - (contentMaxX * scale + paddingXScreen);
+      newOffsetXMax = -contentMinX * scale + paddingXScreen;
+    }
+
+    if (contentScreenHeight + 2 * paddingYScreen <= CONTAINER_HEIGHT_PX) {
+      targetOffsetY = CONTAINER_HEIGHT_PX / 2 - ((contentMinY + contentMaxY) / 2) * scale;
+      newOffsetYMin = targetOffsetY;
+      newOffsetYMax = targetOffsetY;
+    } else {
+      newOffsetYMin = CONTAINER_HEIGHT_PX - (contentMaxY * scale + paddingYScreen);
+      newOffsetYMax = -contentMinY * scale + paddingYScreen;
+    }
+    
+    setPanXSliderLimits({ min: newOffsetXMin, max: newOffsetXMax });
+    setPanYSliderLimits({ min: newOffsetYMin, max: newOffsetYMax });
+
+    // Clamp or set current offsets
+    const clampedOffsetX = Math.max(newOffsetXMin, Math.min(newOffsetXMax, targetOffsetX === offsetX ? offsetX : targetOffsetX));
+    const clampedOffsetY = Math.max(newOffsetYMin, Math.min(newOffsetYMax, targetOffsetY === offsetY ? offsetY : targetOffsetY));
+
+    if (offsetX !== clampedOffsetX) setOffsetX(clampedOffsetX);
+    if (offsetY !== clampedOffsetY) setOffsetY(clampedOffsetY);
+
+    // Update effective grid size based on scale
+    if (scale < 0.4) {
+      setEffectiveGridSize(BASE_GRID_SIZE * 4);
+    } else if (scale < 0.8) {
+      setEffectiveGridSize(BASE_GRID_SIZE * 2);
+    } else {
+      setEffectiveGridSize(BASE_GRID_SIZE);
+    }
+
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
+
+
   const createNode = () => {
     if (newNodeName && containerWidth > 0) {
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
@@ -165,13 +237,16 @@ export default function Home() {
       let attempts = 0;
       const newNodeDimension = getNodeDimension(newNodeType);
 
-      // Node creation happens in world coordinates, within the initial viewport bounds
-      const worldCreationWidth = containerWidth / (nodes.length === 0 ? 1 : scale) ; // initial viewport width in world units
-      const worldCreationHeight = CONTAINER_HEIGHT_PX / (nodes.length === 0 ? 1 : scale);
+      const worldCreationWidth = containerWidth / scale ; 
+      const worldCreationHeight = CONTAINER_HEIGHT_PX / scale;
+      
+      // Adjust creation coordinates by current pan, so new nodes appear in the current view
+      const creationOriginX = -offsetX / scale;
+      const creationOriginY = -offsetY / scale;
 
       do {
-        newNodeX = Math.floor(Math.random() * (worldCreationWidth - newNodeDimension));
-        newNodeY = Math.floor(Math.random() * (worldCreationHeight - newNodeDimension));
+        newNodeX = creationOriginX + Math.floor(Math.random() * (worldCreationWidth - newNodeDimension));
+        newNodeY = creationOriginY + Math.floor(Math.random() * (worldCreationHeight - newNodeDimension));
         
         let overlap = false;
         for (const existingNode of nodes) {
@@ -204,23 +279,7 @@ export default function Home() {
         type: newNodeType,
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
-
-      if (nodes.length === 0 && !isFirstNodeCentered) {
-        const nodeCenterX = newNodeToAdd.x + newNodeDimension / 2;
-        const nodeCenterY = newNodeToAdd.y + newNodeDimension / 2;
-        
-        // containerWidth is screen pixels, CONTAINER_HEIGHT_PX is screen pixels
-        const viewportCenterX = containerWidth / 2;
-        const viewportCenterY = CONTAINER_HEIGHT_PX / 2;
-
-        // Calculate offsets to center this node.
-        // screen_node_cx = world_node_cx * scale + newOffsetX
-        // viewport_cx = world_node_cx * scale + newOffsetX => newOffsetX = viewport_cx - world_node_cx * scale
-        setOffsetX(viewportCenterX - nodeCenterX * scale);
-        setOffsetY(viewportCenterY - nodeCenterY * scale);
-        setIsFirstNodeCentered(true);
-      }
-
+      
       setNodes(prevNodes => [...prevNodes, newNodeToAdd]);
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
@@ -301,11 +360,11 @@ export default function Home() {
     
     const point = 'touches' in event ? event.touches[0] : event;
     setActiveInteractionNodeId(node.id);
-    setInteractionStartPos({ x: point.clientX, y: point.clientY }); // Screen Coords
+    setInteractionStartPos({ x: point.clientX, y: point.clientY }); 
 
     const worldMousePos = screenToWorld(point.clientX, point.clientY);
     setDragOffset({
-        x: worldMousePos.x - node.x, // Offset in world units
+        x: worldMousePos.x - node.x, 
         y: worldMousePos.y - node.y
     });
 
@@ -316,7 +375,7 @@ export default function Home() {
 
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
     const timer = setTimeout(() => {
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { // Check activeID again
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
       }
@@ -349,7 +408,7 @@ export default function Home() {
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if (sourceNode) {
             const sourceDim = getNodeDimension(sourceNode);
-            setLinkingLinePreview({ // All world coords
+            setLinkingLinePreview({ 
               x1: sourceNode.x + sourceDim / 2,
               y1: sourceNode.y + sourceDim / 2,
               x2: worldMousePos.x,
@@ -360,18 +419,10 @@ export default function Home() {
           setIsDraggingForReposition(true);
           setNodes(prevNodes => prevNodes.map(n => {
             if (n.id === activeInteractionNodeId) {
-              const nodeDim = getNodeDimension(n);
               let newX = worldMousePos.x - dragOffset.x;
               let newY = worldMousePos.y - dragOffset.y;
-              
-              // Boundary check using world coordinates against initial world dimensions
-              const worldBoundaryWidth = containerWidth / scale; // How much of world is visible
-              const worldBoundaryHeight = CONTAINER_HEIGHT_PX / scale;
-
-              // For this example, we restrict node movement to the initial defined "world box"
-              // For true infinite canvas, these boundary checks would be removed or different
-              newX = Math.max(0, Math.min(newX, (containerWidth / (nodes.length > 1 ? scale : 1)) - nodeDim));
-              newY = Math.max(0, Math.min(newY, (CONTAINER_HEIGHT_PX / (nodes.length > 1 ? scale : 1)) - nodeDim));
+              // No boundary check here for pseudo-infinite canvas, nodes can move anywhere.
+              // Boundary checks are now handled by panning limits.
               return { ...n, x: newX, y: newY };
             }
             return n;
@@ -402,7 +453,7 @@ export default function Home() {
         const nodeDim = getNodeDimension(node);
         if (worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
             worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim) {
-            if(node.id !== linkingSourceNodeId) { // Don't target self when linking
+            if(node.id !== linkingSourceNodeId) { 
               targetNodeUnderneath = node;
               break;
             }
@@ -424,13 +475,11 @@ export default function Home() {
                     setNewEdgeTagsInput("");
                     setIsCreateEdgeDialogOpen(true);
                 }
-            } else { // Released in empty space after link attempt: move node
+            } else { 
                 const nodeDim = getNodeDimension(sourceNode);
                 let newX = worldMouseReleasePos.x - (dragOffset?.x || 0);
                 let newY = worldMouseReleasePos.y - (dragOffset?.y || 0);
-
-                newX = Math.max(0, Math.min(newX, (containerWidth/scale) - nodeDim));
-                newY = Math.max(0, Math.min(newY, (CONTAINER_HEIGHT_PX/scale) - nodeDim));
+                // No boundary check here
                 setNodes(prevNodes => prevNodes.map(n => n.id === linkingSourceNodeId ? {...n, x: newX, y: newY} : n));
             }
         }
@@ -484,16 +533,13 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, edges, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY]); // Added scale, offsetX, offsetY
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, edges, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
     if (currentNodes.length < 2 || containerWidth === 0) return currentNodes;
 
     let newNodes = currentNodes.map(n => ({ ...n }));
-    // Use the current actual container width (in screen pixels) divided by scale to get world-units boundary
-    const worldBoundaryWidth = containerWidth / scale;
-    const worldBoundaryHeight = CONTAINER_HEIGHT_PX / scale;
 
     for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
       let systemMoved = false;
@@ -502,8 +548,8 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-          if (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId) { // If either is fixed, they don't repel each other
-              continue;
+          if ((fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId))) {
+              continue; 
           }
 
           const dimA = getNodeDimension(nodeA);
@@ -533,21 +579,33 @@ export default function Home() {
             let moveAy = -normDy * forceMagnitude / 2;
             let moveBx = normDx * forceMagnitude / 2;
             let moveBy = normDy * forceMagnitude / 2;
+            
+            // If one node is fixed (but not both, handled by outer if), the other moves by the full force
+            if (nodeA.id === fixedNodeId) { // Node B moves fully
+                moveBx = normDx * forceMagnitude; moveBy = normDy * forceMagnitude;
+                moveAx = 0; moveAy = 0;
+            } else if (nodeB.id === fixedNodeId) { // Node A moves fully
+                moveAx = -normDx * forceMagnitude; moveAy = -normDy * forceMagnitude;
+                moveBx = 0; moveBy = 0;
+            }
+
 
             const prevXA = nodeA.x;
             const prevYA = nodeA.y;
-            nodeA.x += moveAx;
-            nodeA.y += moveAy;
-            nodeA.x = Math.max(0, Math.min(nodeA.x, worldBoundaryWidth - dimA));
-            nodeA.y = Math.max(0, Math.min(nodeA.y, worldBoundaryHeight - dimA));
+            if (nodeA.id !== fixedNodeId) {
+              nodeA.x += moveAx;
+              nodeA.y += moveAy;
+              // No boundary clamping here
+            }
             if (Math.abs(nodeA.x - prevXA) > 0.01 || Math.abs(nodeA.y - prevYA) > 0.01) systemMoved = true;
 
             const prevXB = nodeB.x;
             const prevYB = nodeB.y;
-            nodeB.x += moveBx;
-            nodeB.y += moveBy;
-            nodeB.x = Math.max(0, Math.min(nodeB.x, worldBoundaryWidth - dimB));
-            nodeB.y = Math.max(0, Math.min(nodeB.y, worldBoundaryHeight - dimB));
+            if (nodeB.id !== fixedNodeId) {
+              nodeB.x += moveBx;
+              nodeB.y += moveBy;
+              // No boundary clamping here
+            }
             if (Math.abs(nodeB.x - prevXB) > 0.01 || Math.abs(nodeB.y - prevYB) > 0.01) systemMoved = true;
           }
         }
@@ -555,11 +613,11 @@ export default function Home() {
       if (!systemMoved && iter > 0) break;
     }
     return newNodes;
-  }, [getNodeDimension, containerWidth, scale]); // Added scale
+  }, [getNodeDimension, containerWidth, scale]); // Removed offsetX, offsetY from deps as they don't affect world logic
 
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return;
-    const repulsedNodes = applyRepulsion(nodes, null);
+    const repulsedNodes = applyRepulsion(nodes, null); // No node is fixed during general repulsion
     let changed = false;
     if (nodes.length === repulsedNodes.length) {
         for (let i = 0; i < nodes.length; i++) {
@@ -569,6 +627,7 @@ export default function Home() {
             }
         }
     } else { changed = true; }
+
     if (changed) {
       const timeoutId = setTimeout(() => setNodes(repulsedNodes), 0);
       return () => clearTimeout(timeoutId);
@@ -577,11 +636,13 @@ export default function Home() {
 
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return;
+    
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
     let changed = false;
     for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i].id === activeInteractionNodeId) continue;
-        if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
+        if (nodes[i].id === activeInteractionNodeId) continue; 
+        const rn = repulsedNodes.find(r => r.id === nodes[i].id);
+        if (rn && (Math.abs(nodes[i].x - rn.x) > 0.1 || Math.abs(nodes[i].y - rn.y) > 0.1)) {
             changed = true;
             break;
         }
@@ -589,7 +650,7 @@ export default function Home() {
     if (changed) {
       const timeoutId = setTimeout(() => {
         setNodes(currentNodes => currentNodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn;
+            if (cn.id === activeInteractionNodeId) return cn; // Keep active node fixed
             const rn = repulsedNodes.find(r => r.id === cn.id);
             return rn || cn;
         }));
@@ -598,14 +659,16 @@ export default function Home() {
     }
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
+
   const [isClient, setIsClient] = useState(false);
   useEffect(() => setIsClient(true), []);
 
-  // Calculate minScale (simplified for now)
-  const minScale = nodes.length > 1 ? 0.2 : 0.5;
-  const maxScale = 1.5;
-  // Simplified pan limits
-  const panLimit = 1000;
+  const minScale = 0.1; 
+  const maxScale = 2.0;
+
+  const patternOffsetX = (-offsetX / scale) % effectiveGridSize;
+  const patternOffsetY = (-offsetY / scale) % effectiveGridSize;
+
 
   return (
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
@@ -628,24 +691,26 @@ export default function Home() {
             <Label htmlFor="offset-x-slider" className="text-sm text-right">Pan X: {Math.round(offsetX)}px</Label>
             <Slider
                 id="offset-x-slider"
-                min={-panLimit}
-                max={panLimit}
+                min={panXSliderLimits.min}
+                max={panXSliderLimits.max}
                 step={10}
                 value={[offsetX]}
                 onValueChange={(value) => setOffsetX(value[0])}
                 className="col-span-2"
+                disabled={panXSliderLimits.min === panXSliderLimits.max}
             />
         </div>
          <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
             <Label htmlFor="offset-y-slider" className="text-sm text-right">Pan Y: {Math.round(offsetY)}px</Label>
             <Slider
                 id="offset-y-slider"
-                min={-panLimit}
-                max={panLimit}
+                min={panYSliderLimits.min}
+                max={panYSliderLimits.max}
                 step={10}
                 value={[offsetY]}
                 onValueChange={(value) => setOffsetY(value[0])}
                 className="col-span-2"
+                disabled={panYSliderLimits.min === panYSliderLimits.max}
             />
         </div>
       </div>
@@ -658,36 +723,41 @@ export default function Home() {
         <div
           ref={transformedContentRef}
           style={{
-            width: '100%', // Takes full width of parent for transform reference
-            height: '100%',// Takes full height of parent for transform reference
+            width: '100%', 
+            height: '100%',
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
             transformOrigin: '0 0',
-            willChange: 'transform', // Performance hint
+            willChange: 'transform', 
           }}
         >
-          {/* Background Grid SVG */}
-          <svg width="100%" height="100%" className="absolute top-0 left-0 pointer-events-none z-0"
-            style={{
-                // Make SVG large enough to cover potential view after pan/zoom
-                // These values ensure the pattern covers a large area in world coordinates
-                width: `${Math.max(2000, containerWidth / scale * 2)}px`,
-                height: `${Math.max(2000, CONTAINER_HEIGHT_PX / scale * 2)}px`,
-                // Adjust top/left if you want (0,0) of world to be different from top-left of SVG
-            }}
-          >
+          <svg width="100%" height="100%" className="absolute top-0 left-0 pointer-events-none z-0">
             <defs>
-              <pattern id="gridPattern" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
-                <path d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`} fill="none" stroke="hsl(var(--border))" strokeWidth="0.5" opacity="0.5"/>
+              <pattern 
+                id="gridPattern" 
+                width={effectiveGridSize} 
+                height={effectiveGridSize} 
+                patternUnits="userSpaceOnUse"
+                x={patternOffsetX}
+                y={patternOffsetY}
+              >
+                <path d={`M ${effectiveGridSize} 0 L 0 0 0 ${effectiveGridSize}`} fill="none" stroke="hsl(var(--border))" strokeWidth="0.5" opacity="0.5"/>
               </pattern>
             </defs>
             <rect width="100%" height="100%" fill="url(#gridPattern)" />
           </svg>
 
-          {/* Edges SVG - Make sure it's inside transformedContentRef */}
           <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" 
-            style={{ 
-                width: `${Math.max(2000, containerWidth / scale * 2)}px`, // Match grid size or content extent
-                height: `${Math.max(2000, CONTAINER_HEIGHT_PX / scale * 2)}px`,
+             style={{ 
+                // This SVG needs to be large enough to draw all potential edges.
+                // For simplicity, let's make it cover a very large world area.
+                // A more optimized solution would size it based on content bounds.
+                width: `10000px`, 
+                height: `10000px`,
+                // Position it so its 0,0 aligns with world 0,0 if nodes can go very negative.
+                // However, since nodes are created near origin and pan adjusts view, this might be okay.
+                // Let's assume nodes don't go massively negative for now.
+                left: '-5000px', // Offset so 0,0 of this SVG is near world 0,0 if world is centered
+                top: '-5000px',
             }}
           >
             {isClient && edges.map(edge => {
@@ -697,47 +767,49 @@ export default function Home() {
 
               const sourceDim = getNodeDimension(sourceNode);
               const targetDim = getNodeDimension(targetNode);
+              
+              // Adjust coordinates relative to the SVG's own offset if it has one
+              const svgOffsetX = 5000; // Matches the 'left' style
+              const svgOffsetY = 5000; // Matches the 'top' style
 
-              // Coordinates are now world coordinates
               return (
                 <line
                   key={edge.id}
-                  x1={sourceNode.x + sourceDim / 2}
-                  y1={sourceNode.y + sourceDim / 2}
-                  x2={targetNode.x + targetDim / 2}
-                  y2={targetNode.y + targetDim / 2}
+                  x1={svgOffsetX + sourceNode.x + sourceDim / 2}
+                  y1={svgOffsetY + sourceNode.y + sourceDim / 2}
+                  x2={svgOffsetX + targetNode.x + targetDim / 2}
+                  y2={svgOffsetY + targetNode.y + targetDim / 2}
                   stroke="hsl(var(--ring))"
-                  strokeWidth={2 / scale} // Make stroke width responsive to zoom
+                  strokeWidth={2 / scale} 
                   opacity="0.6"
                 />
               );
             })}
             {linkingLinePreview && (
-              <line // Coordinates are world coordinates
-                x1={linkingLinePreview.x1}
-                y1={linkingLinePreview.y1}
-                x2={linkingLinePreview.x2}
-                y2={linkingLinePreview.y2}
+              <line 
+                x1={5000 + linkingLinePreview.x1} // Adjust by SVG offset
+                y1={5000 + linkingLinePreview.y1}
+                x2={5000 + linkingLinePreview.x2}
+                y2={5000 + linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
-                strokeWidth={2 / scale} // Responsive stroke width
+                strokeWidth={2 / scale} 
                 strokeDasharray={`${5/scale},${5/scale}`}
               />
             )}
           </svg>
 
-          {/* Nodes - Positioned absolutely within transformedContentRef */}
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
             const nodeStyles: React.CSSProperties = {
-              position: 'absolute', // Crucial for positioning within transformed parent
-              left: `${node.x}px`, // World coordinates
-              top: `${node.y}px`,  // World coordinates
+              position: 'absolute', 
+              left: `${node.x}px`, 
+              top: `${node.y}px`,  
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))",
               color: "hsl(var(--card-foreground))",
               zIndex: activeInteractionNodeId === node.id ? 2 : 1,
-              borderRadius: '9999px', // fully rounded
+              borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
@@ -745,7 +817,7 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-              transition: 'box-shadow 0.3s ease, transform 0.1s linear', // transform for smoothness if needed
+              transition: 'box-shadow 0.3s ease', // Removed transform transition
               userSelect: 'none',
               border: '1px solid hsl(var(--border))'
             };
@@ -768,23 +840,23 @@ export default function Home() {
                 onTouchStart={(e) => handleNodeInteractionStart(e, node)}
                 title={`Interact with ${node.name}`}
               >
-                <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${1 / scale * 16}px`}}>{node.name}</h2>
+                <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${Math.max(8, 16 / scale)}px`}}>{node.name}</h2>
                 {node.tags.length > 0 && (
                   <div className="mt-1 flex flex-wrap justify-center gap-1">
                     {node.tags.slice(0, 2).map(tag => (
-                      <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${1 / scale * 10}px`}}>
+                      <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${Math.max(6, 10 / scale)}px`}}>
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
                 {node.tags.length > 2 && (
-                  <span className="text-xs mt-1 opacity-70" style={{ fontSize: `${1 / scale * 10}px`}}>+{node.tags.length - 2} more</span>
+                  <span className="text-xs mt-1 opacity-70" style={{ fontSize: `${Math.max(6, 10 / scale)}px`}}>+{node.tags.length - 2} more</span>
                 )}
               </div>
             );
           })}
-        </div> {/* End of transformedContentRef */}
+        </div> 
       </div>
 
       {showSearchBar && (
@@ -984,3 +1056,4 @@ export default function Home() {
     </main>
   );
 }
+
