@@ -175,55 +175,49 @@ export default function Home() {
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else {
       // Default world extent when no nodes (or only active node)
-      // This should ensure the initial view is centered and pannable
-      contentMinXWorld = 0;
+      contentMinXWorld = 0; // Centered around a nominal 0,0 world origin initially
       contentMaxXWorld = containerWidth / scale; 
       contentMinYWorld = 0;
       contentMaxYWorld = CONTAINER_HEIGHT_PX / scale;
     }
     
-    // Padding in screen pixels (50% of viewport)
     const paddingXScreen = containerWidth / 2;
     const paddingYScreen = CONTAINER_HEIGHT_PX / 2;
 
-    // Content dimensions in screen pixels
     const contentScreenWidth = (contentMaxXWorld - contentMinXWorld) * scale;
     const contentScreenHeight = (contentMaxYWorld - contentMinYWorld) * scale;
     
     let newOffsetXMin, newOffsetXMax, newOffsetYMin, newOffsetYMax;
 
-    // Calculate X pan limits
     if (contentScreenWidth <= containerWidth - 2 * paddingXScreen) {
-      // Content + padding is smaller than or fits viewport: center it
       const targetOffsetX = containerWidth / 2 - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
       newOffsetXMin = targetOffsetX;
       newOffsetXMax = targetOffsetX;
     } else {
-      // Content + padding is larger than viewport: allow panning
       newOffsetXMin = containerWidth - (contentMaxXWorld * scale + paddingXScreen);
       newOffsetXMax = -contentMinXWorld * scale + paddingXScreen;
     }
 
-    // Calculate Y pan limits
     if (contentScreenHeight <= CONTAINER_HEIGHT_PX - 2 * paddingYScreen) {
-      // Content + padding is smaller than or fits viewport: center it
       const targetOffsetY = CONTAINER_HEIGHT_PX / 2 - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
       newOffsetYMin = targetOffsetY;
       newOffsetYMax = targetOffsetY;
     } else {
-      // Content + padding is larger than viewport: allow panning
       newOffsetYMin = CONTAINER_HEIGHT_PX - (contentMaxYWorld * scale + paddingYScreen);
       newOffsetYMax = -contentMinYWorld * scale + paddingYScreen;
     }
     
-    setPanXSliderLimits({ min: Math.min(newOffsetXMin, newOffsetXMax), max: Math.max(newOffsetXMin, newOffsetXMax) }); // Ensure min <= max
-    setPanYSliderLimits({ min: Math.min(newOffsetYMin, newOffsetYMax), max: Math.max(newOffsetYMin, newOffsetYMax) }); // Ensure min <= max
+    const finalOffsetXMin = Math.min(newOffsetXMin, newOffsetXMax);
+    const finalOffsetXMax = Math.max(newOffsetXMin, newOffsetXMax);
+    const finalOffsetYMin = Math.min(newOffsetYMin, newOffsetYMax);
+    const finalOffsetYMax = Math.max(newOffsetYMin, newOffsetYMax);
 
-    // Clamp current offsets
-    setOffsetX(currentOffsetX => Math.max(Math.min(newOffsetXMin, newOffsetXMax), Math.min(Math.max(newOffsetXMin, newOffsetXMax), currentOffsetX)));
-    setOffsetY(currentOffsetY => Math.max(Math.min(newOffsetYMin, newOffsetYMax), Math.min(Math.max(newOffsetYMin, newOffsetYMax), currentOffsetY)));
+    setPanXSliderLimits({ min: finalOffsetXMin, max: finalOffsetXMax });
+    setPanYSliderLimits({ min: finalOffsetYMin, max: finalOffsetYMax });
 
-    // Update effective grid size based on scale
+    setOffsetX(currentOffsetX => Math.max(finalOffsetXMin, Math.min(finalOffsetXMax, currentOffsetX)));
+    setOffsetY(currentOffsetY => Math.max(finalOffsetYMin, Math.min(finalOffsetYMax, currentOffsetY)));
+
     if (scale < 0.4) {
       setEffectiveGridSize(BASE_GRID_SIZE * 4);
     } else if (scale < 0.8) {
@@ -232,7 +226,7 @@ export default function Home() {
       setEffectiveGridSize(BASE_GRID_SIZE);
     }
 
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension]);
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]); // Added offsetX, offsetY to deps for clamping
 
 
   const createNode = () => {
@@ -244,11 +238,9 @@ export default function Home() {
       let attempts = 0;
       const newNodeDimension = getNodeDimension(newNodeType);
 
-      // Create nodes relative to the current center of the viewport in world coordinates
       const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
       const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
       
-      // Define a creation area around the current view center (e.g., half viewport size)
       const creationAreaWorldWidth = (containerWidth / 2) / scale;
       const creationAreaWorldHeight = (CONTAINER_HEIGHT_PX / 2) / scale;
 
@@ -274,7 +266,6 @@ export default function Home() {
       } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
 
       if (!placed) {
-        console.warn(`Could not find a non-overlapping position for new node "${newNodeName}" after ${MAX_PLACEMENT_ATTEMPTS} attempts.`);
         // Fallback: place at view center, potentially overlapping
         newNodeX = worldViewCenterX - newNodeDimension / 2;
         newNodeY = worldViewCenterY - newNodeDimension / 2;
@@ -485,7 +476,6 @@ export default function Home() {
                     setIsCreateEdgeDialogOpen(true);
                 }
             } else { 
-                // If linking and released in empty space, move the source node
                 setNodes(prevNodes => prevNodes.map(n => {
                     if (n.id === linkingSourceNodeId) {
                         let newX = worldMouseReleasePos.x - (dragOffset?.x || (getNodeDimension(n)/2));
@@ -498,8 +488,6 @@ export default function Home() {
         }
       } else if (isDraggingForReposition) {
         const draggedNodeId = activeInteractionNodeId;
-        // Node position is already updated during move.
-        // Check if dropped on another node for edge creation.
         if (draggedNodeId && targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
             const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
             if (existingEdge) {
@@ -514,17 +502,14 @@ export default function Home() {
             }
         }
       } else if (isLinkingModeActive && activeInteractionNodeId) { 
-        // Press-hold completed, but no significant drag occurred for linking line
         setShowSearchBar(true);
       } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
-        // This is a click/tap
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
 
-      // Reset states that should be cleared regardless of dialogs opening
       if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !showSearchBar) {
-         setActiveInteractionNodeId(null); // Only clear if no dialog will take focus
+         setActiveInteractionNodeId(null); 
       }
       setInteractionStartPos(null);
       setDragOffset(null);
@@ -566,8 +551,6 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-          // If fixedNodeId is present, it means nodeA or nodeB is being interacted with.
-          // The fixedNodeId node should not exert force nor be moved by others.
           if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
               continue; 
           }
@@ -594,8 +577,7 @@ export default function Home() {
             const forceMagnitude = overlap * REPULSION_STRENGTH;
             const normDx = dx / distance;
             const normDy = dy / distance;
-
-            // Both nodes move by half unless one is fixed (which is handled by the continue above)
+            
             let moveAx = -normDx * forceMagnitude / 2;
             let moveAy = -normDy * forceMagnitude / 2;
             let moveBx = normDx * forceMagnitude / 2;
@@ -603,7 +585,6 @@ export default function Home() {
             
             const prevXA = nodeA.x;
             const prevYA = nodeA.y;
-            // Only apply movement if node is not the fixed one
             if (nodeA.id !== fixedNodeId) { 
               nodeA.x += moveAx;
               nodeA.y += moveAy;
@@ -626,10 +607,9 @@ export default function Home() {
   }, [getNodeDimension, containerWidth]); 
 
   useEffect(() => {
-    // General repulsion when no node is being actively interacted with
     if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return;
     
-    const repulsedNodes = applyRepulsion(nodes, null); // No node is fixed
+    const repulsedNodes = applyRepulsion(nodes, null); 
     let changed = false;
     if (nodes.length === repulsedNodes.length) {
         for (let i = 0; i < nodes.length; i++) {
@@ -641,20 +621,16 @@ export default function Home() {
     } else { changed = true; }
 
     if (changed) {
-      // Defer state update slightly to avoid rapid re-renders during interactions
       const timeoutId = setTimeout(() => setNodes(repulsedNodes), 50); 
       return () => clearTimeout(timeoutId);
     }
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
   useEffect(() => {
-    // Repulsion when a node IS being actively interacted with (fixedNodeId is activeInteractionNodeId)
-    // Only non-active nodes should repel each other. The active node does not exert force.
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return;
     
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
     let changed = false;
-    // Check if any non-active node actually moved
     for (let i = 0; i < nodes.length; i++) {
         if (nodes[i].id === activeInteractionNodeId) continue; 
         const rn = repulsedNodes.find(r => r.id === nodes[i].id);
@@ -667,9 +643,9 @@ export default function Home() {
     if (changed) {
       const timeoutId = setTimeout(() => {
         setNodes(currentNodes => currentNodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn; // Keep active node fixed by user input
+            if (cn.id === activeInteractionNodeId) return cn; 
             const rn = repulsedNodes.find(r => r.id === cn.id);
-            return rn || cn; // Apply repulsion to other nodes
+            return rn || cn; 
         }));
       }, 50);
       return () => clearTimeout(timeoutId);
@@ -681,15 +657,15 @@ export default function Home() {
   useEffect(() => setIsClient(true), []);
 
   const minScale = 0.1; 
-  const maxScale = 1.5; // Allow slight zoom in
+  const maxScale = 1.5;
 
   const worldViewTopLeftX = -offsetX / scale;
   const worldViewTopLeftY = -offsetY / scale;
   const visibleWorldWidth = containerWidth / scale;
   const visibleWorldHeight = CONTAINER_HEIGHT_PX / scale;
 
-  const patternOffsetX = worldViewTopLeftX % effectiveGridSize;
-  const patternOffsetY = worldViewTopLeftY % effectiveGridSize;
+  const correctedPatternOffsetX = -(worldViewTopLeftX % effectiveGridSize);
+  const correctedPatternOffsetY = -(worldViewTopLeftY % effectiveGridSize);
 
 
   return (
@@ -715,11 +691,11 @@ export default function Home() {
                 id="offset-x-slider"
                 min={panXSliderLimits.min}
                 max={panXSliderLimits.max}
-                step={1} // Finer step for smoother manual pan
+                step={1}
                 value={[offsetX]}
                 onValueChange={(value) => setOffsetX(value[0])}
                 className="col-span-2"
-                disabled={panXSliderLimits.min >= panXSliderLimits.max} // Disable if no range
+                disabled={panXSliderLimits.min >= panXSliderLimits.max}
             />
         </div>
          <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
@@ -728,11 +704,11 @@ export default function Home() {
                 id="offset-y-slider"
                 min={panYSliderLimits.min}
                 max={panYSliderLimits.max}
-                step={1} // Finer step
+                step={1}
                 value={[offsetY]}
                 onValueChange={(value) => setOffsetY(value[0])}
                 className="col-span-2"
-                disabled={panYSliderLimits.min >= panYSliderLimits.max} // Disable if no range
+                disabled={panYSliderLimits.min >= panYSliderLimits.max}
             />
         </div>
       </div>
@@ -752,20 +728,25 @@ export default function Home() {
             willChange: 'transform', 
           }}
         >
-          <svg width="100%" height="100%" className="absolute top-0 left-0 pointer-events-none z-0">
+          <svg 
+            width="100%" 
+            height="100%" 
+            className="absolute top-0 left-0 pointer-events-none z-0"
+            viewBox={`${worldViewTopLeftX} ${worldViewTopLeftY} ${visibleWorldWidth} ${visibleWorldHeight}`}
+            preserveAspectRatio="none"
+          >
             <defs>
               <pattern 
                 id="gridPattern" 
                 width={effectiveGridSize} 
                 height={effectiveGridSize} 
                 patternUnits="userSpaceOnUse"
-                x={patternOffsetX} // Offset of the pattern tile itself
-                y={patternOffsetY}
+                x={correctedPatternOffsetX} 
+                y={correctedPatternOffsetY}
               >
-                <path d={`M ${effectiveGridSize} 0 L 0 0 0 ${effectiveGridSize}`} fill="none" stroke="hsl(var(--border))" strokeWidth="0.5" opacity="0.5"/>
+                <path d={`M ${effectiveGridSize} 0 L 0 0 0 ${effectiveGridSize}`} fill="none" stroke="hsl(var(--border))" strokeWidth={0.5 / scale } opacity="0.5"/>
               </pattern>
             </defs>
-            {/* This rect defines the area where the pattern is drawn, in world coordinates */}
             <rect 
               x={worldViewTopLeftX} 
               y={worldViewTopLeftY} 
@@ -777,13 +758,9 @@ export default function Home() {
 
           <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" 
              style={{ 
-                // This SVG needs to be large enough to draw all potential edges.
-                // Using a very large fixed size relative to its parent's (transformedContentRef) scaled size.
-                // These dimensions are in the SVG's own coordinate system (effectively world units here if not scaled again by SVG attrs)
-                // The left/top are to center this large canvas around a nominal world origin
-                width: `10000px`, // Should be large enough in world units.
+                width: `10000px`, 
                 height: `10000px`,
-                left: '-5000px', // Center this large drawing surface around world (0,0)
+                left: '-5000px', 
                 top: '-5000px',
             }}
           >
@@ -795,8 +772,6 @@ export default function Home() {
               const sourceDim = getNodeDimension(sourceNode);
               const targetDim = getNodeDimension(targetNode);
               
-              // Coordinates for lines are world coordinates.
-              // The SVG is offset by -5000, so add 5000 to map world coords to SVG coords.
               const svgDrawingOffsetX = 5000;
               const svgDrawingOffsetY = 5000;
 
@@ -808,7 +783,7 @@ export default function Home() {
                   x2={svgDrawingOffsetX + targetNode.x + targetDim / 2}
                   y2={svgDrawingOffsetY + targetNode.y + targetDim / 2}
                   stroke="hsl(var(--ring))"
-                  strokeWidth={2 / scale} // Make stroke visually thinner when zoomed out
+                  strokeWidth={2 / scale} 
                   opacity="0.6"
                 />
               );
@@ -821,7 +796,7 @@ export default function Home() {
                 y2={5000 + linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
                 strokeWidth={2 / scale} 
-                strokeDasharray={`${5/scale},${5/scale}`} // Dash pattern scales too
+                strokeDasharray={`${5/scale},${5/scale}`} 
               />
             )}
           </svg>
@@ -836,7 +811,7 @@ export default function Home() {
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))",
               color: "hsl(var(--card-foreground))",
-              zIndex: activeInteractionNodeId === node.id ? 20 : 10, // Higher Z for active
+              zIndex: activeInteractionNodeId === node.id ? 20 : 10, 
               borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
@@ -845,7 +820,7 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)',
-              transition: 'box-shadow 0.2s ease', 
+              transition: 'box-shadow 0.2s ease, transform 0.2s ease', 
               userSelect: 'none',
               border: '1px solid hsl(var(--border))'
             };
@@ -856,15 +831,21 @@ export default function Home() {
             
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))';
-                nodeStyles.transform = 'scale(1.05)'; // Slight visual feedback for active node
+                nodeStyles.transform = 'scale(1.05)'; 
             }
 
-            const minFontSize = 6; // Minimum font size in pixels on screen
-            const baseNameFontSize = 16; // Base font size for name in world units
-            const baseTagFontSize = 10; // Base font size for tags in world units
+            const minFontSize = 6; 
+            const baseNameFontSize = 16; 
+            const baseTagFontSize = 10;
 
-            const dynamicNameFontSize = Math.max(minFontSize / scale, baseNameFontSize / scale);
-            const dynamicTagFontSize = Math.max(minFontSize / scale, baseTagFontSize / scale);
+            // Calculate font size in world units, then clamp to minFontSize (in screen pixels) after scaling
+            const dynamicNameFontSizeScreen = Math.max(minFontSize, baseNameFontSize * scale);
+            const dynamicTagFontSizeScreen = Math.max(minFontSize, baseTagFontSize * scale);
+            
+            // To apply this screen font size to an element within a scaled container,
+            // we need to inversely scale the font size.
+            const finalNameFontSize = dynamicNameFontSizeScreen / scale;
+            const finalTagFontSize = dynamicTagFontSizeScreen / scale;
 
 
             return (
@@ -876,18 +857,18 @@ export default function Home() {
                 onTouchStart={(e) => handleNodeInteractionStart(e, node)}
                 title={`Interact with ${node.name}`}
               >
-                <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${dynamicNameFontSize}px`, lineHeight: '1.2' }}>{node.name}</h2>
+                <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${finalNameFontSize}px`, lineHeight: '1.2' }}>{node.name}</h2>
                 {node.tags.length > 0 && (
-                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]"> {/* Limit tag height */}
+                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]">
                     {node.tags.slice(0, 2).map(tag => (
-                      <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${dynamicTagFontSize}px`, lineHeight: '1.2' }}>
+                      <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
                 {node.tags.length > 2 && (
-                  <span className="text-xs mt-0.5 opacity-70" style={{ fontSize: `${dynamicTagFontSize}px`, lineHeight: '1.2' }}>+{node.tags.length - 2} more</span>
+                  <span className="text-xs mt-0.5 opacity-70" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>+{node.tags.length - 2} more</span>
                 )}
               </div>
             );
@@ -903,14 +884,13 @@ export default function Home() {
               className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
               onFocus={() => {
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
-                 // When search bar is focused, no node should be "active" for interaction
                 if(activeInteractionNodeId) setActiveInteractionNodeId(null);
               }}
             />
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null); // Ensure active node is cleared when closing search
+                setActiveInteractionNodeId(null); 
               }}
               variant="ghost"
               size="sm"
@@ -1019,7 +999,7 @@ export default function Home() {
           if (!isOpen) {
             setNewEdgeDataSourceNodeId(null);
             setNewEdgeDataTargetNodeId(null);
-            setActiveInteractionNodeId(null); // Clear active node if dialog closes
+            setActiveInteractionNodeId(null); 
           }
       }}>
         <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
@@ -1052,7 +1032,7 @@ export default function Home() {
       {editingEdge && (
         <Dialog open={isEditEdgeDialogOpen} onOpenChange={(isOpen) => {
             setIsEditEdgeDialogOpen(isOpen);
-            if (!isOpen) { setEditingEdge(null); setActiveInteractionNodeId(null); } // Clear active node
+            if (!isOpen) { setEditingEdge(null); setActiveInteractionNodeId(null); } 
         }}>
           <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
             <DialogHeader>
@@ -1095,3 +1075,4 @@ export default function Home() {
   );
 }
 
+    
