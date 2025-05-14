@@ -40,7 +40,6 @@ interface Edge {
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
 
-// const CONTAINER_MAX_WIDTH_PX = 768; // Removed
 const CONTAINER_HEIGHT_PX = 500;
 
 const PRESS_HOLD_THRESHOLD = 700;
@@ -99,15 +98,14 @@ export default function Home() {
     if (containerRef.current) {
       setContainerWidth(containerRef.current.getBoundingClientRect().width);
     }
-    // Optional: Add resize listener for fully dynamic resizing
-    // const handleResize = () => {
-    //   if (containerRef.current) {
-    //     setContainerWidth(containerRef.current.getBoundingClientRect().width);
-    //   }
-    // };
-    // window.addEventListener('resize', handleResize);
-    // return () => window.removeEventListener('resize', handleResize);
-  }, [containerRef]);
+    const handleResize = () => {
+      if (containerRef.current) {
+        setContainerWidth(containerRef.current.getBoundingClientRect().width);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
 
   const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
@@ -116,7 +114,7 @@ export default function Home() {
   }, []);
 
   const createNode = () => {
-    if (newNodeName) {
+    if (newNodeName && containerWidth > 0) { // Ensure containerWidth is set
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
       let newNodeX = 0;
       let newNodeY = 0;
@@ -171,7 +169,7 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null);
+    setActiveInteractionNodeId(null); // Clear active interaction for dialog
   }, []);
 
   const saveNodeChanges = () => {
@@ -234,9 +232,11 @@ export default function Home() {
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
 
     const timer = setTimeout(() => {
+      // Check if still the active node and no significant drag has occurred
       if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) {
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
+        // No drag yet, so linking preview is not set here
       }
       setPressHoldTimer(null);
     }, PRESS_HOLD_THRESHOLD);
@@ -265,7 +265,8 @@ export default function Home() {
         }
 
         if (isLinkingModeActive && linkingSourceNodeId) {
-          setIsDraggingForReposition(false);
+          // Dragging for linking (after press-hold was completed)
+          setIsDraggingForReposition(false); // Ensure not misinterpreted as repositioning
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if (sourceNode) {
             const sourceDim = getNodeDimension(sourceNode);
@@ -277,6 +278,7 @@ export default function Home() {
             });
           }
         } else {
+          // Dragging for repositioning (no prior press-hold completion or press-hold was cancelled by drag)
           setIsDraggingForReposition(true);
           setNodes(prevNodes => prevNodes.map(n => {
             if (n.id === activeInteractionNodeId) {
@@ -369,7 +371,7 @@ export default function Home() {
         }
       } else if (isLinkingModeActive && activeInteractionNodeId) { // Press-hold completed, no drag -> show search
         setShowSearchBar(true);
-      } else if (activeInteractionNodeId && !isDraggingForReposition && !showSearchBar) { // Simple click/tap
+      } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { // Simple click/tap
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
@@ -406,7 +408,7 @@ export default function Home() {
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
-    if (currentNodes.length < 2) return currentNodes;
+    if (currentNodes.length < 2 || containerWidth === 0) return currentNodes;
 
     let newNodes = currentNodes.map(n => ({ ...n }));
 
@@ -416,22 +418,6 @@ export default function Home() {
         for (let j = i + 1; j < newNodes.length; j++) {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
-
-          // If either node is the fixedNodeId (being interacted with), it should not exert repulsion.
-          // This allows the user to drag a node "through" others or close to others for linking
-          // without the target node being pushed away by the dragged node.
-          if (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId) {
-            // However, if nodeA is fixed, nodeB should still be repelled by nodeA if nodeB is NOT fixed.
-            // And vice-versa. But if BOTH are fixed (which shouldn't happen if fixedNodeId is singular) or
-            // if the non-fixed node is being repelled by a fixed one, we need to handle that.
-            // The current logic: if nodeA is fixed, nodeB (not fixed) moves. If nodeB is fixed, nodeA (not fixed) moves.
-            // If neither is fixed, both move. This seems okay.
-            // The constraint is that the fixedNodeId itself is not *moved* by repulsion,
-            // but it *can* repel non-fixed nodes.
-            // Let's refine: if one of the nodes is the fixedNodeId, it doesn't get pushed.
-            // The other node gets pushed by the full force.
-            // If the fixedNodeId is the one *exerting* the force, this is handled by checking if the node to be moved is fixed.
-          }
 
           const dimA = getNodeDimension(nodeA);
           const dimB = getNodeDimension(nodeB);
@@ -446,7 +432,6 @@ export default function Home() {
           const dx = centerBx - centerAx;
           const dy = centerBy - centerAy;
           const distanceSquared = dx * dx + dy * dy;
-
           const targetSeparation = radiusA + radiusB + MIN_SEPARATION;
           const targetSeparationSquared = targetSeparation * targetSeparation;
 
@@ -459,57 +444,50 @@ export default function Home() {
 
             let moveAx = 0, moveAy = 0, moveBx = 0, moveBy = 0;
 
+            // Only calculate and apply repulsion if NEITHER node is the fixedNodeId.
+            // The fixedNodeId itself is immune to movement from repulsion (handled by the update block),
+            // and it does not exert force on others.
             if (nodeA.id !== fixedNodeId && nodeB.id !== fixedNodeId) {
-                // Both nodes are not fixed, they share the movement
                 moveAx = -normDx * forceMagnitude / 2;
                 moveAy = -normDy * forceMagnitude / 2;
                 moveBx = normDx * forceMagnitude / 2;
                 moveBy = normDy * forceMagnitude / 2;
-            } else if (nodeA.id !== fixedNodeId && nodeB.id === fixedNodeId) {
-                // Node B is fixed, only Node A moves (by the full force)
-                moveAx = -normDx * forceMagnitude;
-                moveAy = -normDy * forceMagnitude;
-            } else if (nodeA.id === fixedNodeId && nodeB.id !== fixedNodeId) {
-                // Node A is fixed, only Node B moves (by the full force)
-                moveBx = normDx * forceMagnitude;
-                moveBy = normDy * forceMagnitude;
             }
-            // If both are fixed (nodeA.id === fixedNodeId && nodeB.id === fixedNodeId), no movement.
-            // This case implies fixedNodeId might be an array or a different logic,
-            // but with a single fixedNodeId, this specific sub-condition is effectively covered.
+            // If one of the nodes is fixed, moveAx, moveAy, moveBx, moveBy remain 0 for this pair.
 
-            if (nodeA.id !== fixedNodeId) {
+            // Apply calculated movements only if the node itself is not fixed.
+            if (nodeA.id !== fixedNodeId && (moveAx !== 0 || moveAy !== 0)) {
                 const prevXA = nodeA.x;
                 const prevYA = nodeA.y;
                 nodeA.x += moveAx;
                 nodeA.y += moveAy;
                 nodeA.x = Math.max(0, Math.min(nodeA.x, containerWidth - dimA));
                 nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
-                if (nodeA.x !== prevXA || nodeA.y !== prevYA) systemMoved = true;
+                if (Math.abs(nodeA.x - prevXA) > 0.01 || Math.abs(nodeA.y - prevYA) > 0.01) systemMoved = true;
             }
 
-            if (nodeB.id !== fixedNodeId) {
+            if (nodeB.id !== fixedNodeId && (moveBx !== 0 || moveBy !== 0)) {
                 const prevXB = nodeB.x;
                 const prevYB = nodeB.y;
                 nodeB.x += moveBx;
                 nodeB.y += moveBy;
                 nodeB.x = Math.max(0, Math.min(nodeB.x, containerWidth - dimB));
                 nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
-                if (nodeB.x !== prevXB || nodeB.y !== prevYB) systemMoved = true;
+                 if (Math.abs(nodeB.x - prevXB) > 0.01 || Math.abs(nodeB.y - prevYB) > 0.01) systemMoved = true;
             }
           }
         }
       }
-      if (!systemMoved && iter > 0) break;
+      if (!systemMoved && iter > 0) break; // Optimization: if system hasn't moved, it's stable
     }
     return newNodes;
-  }, [getNodeDimension, containerWidth]);
+  }, [getNodeDimension, containerWidth]); // Removed setNodes from dependencies
 
 
   useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0) return; // Also wait for containerWidth to be set
+    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return; // Don't run repulsion if a node is active or initial conditions not met
 
-    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
+    const repulsedNodes = applyRepulsion(nodes, null); // Pass null when no node is actively interacted with for global repulsion
 
     let changed = false;
     if (nodes.length === repulsedNodes.length) {
@@ -520,12 +498,61 @@ export default function Home() {
             }
         }
     } else {
-        changed = true;
+        changed = true; // Should not happen if lengths are same
     }
 
     if (changed) {
       const timeoutId = setTimeout(() => {
         setNodes(repulsedNodes);
+      }, 0); // Defer state update slightly
+      return () => clearTimeout(timeoutId);
+    }
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); // Removed setNodes from here too
+
+  // Separate effect for repulsion when a node IS active (being dragged/linked)
+  useEffect(() => {
+    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return;
+
+    // Apply repulsion, but the activeInteractionNodeId is fixed and does not exert force
+    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
+
+    let changed = false;
+    const currentActiveNode = nodes.find(n => n.id === activeInteractionNodeId);
+    const repulsedActiveNode = repulsedNodes.find(n => n.id === activeInteractionNodeId);
+
+    // Check if any non-active node moved, or if active node's recorded position (if it were allowed to move by this effect) changed
+    for (let i = 0; i < nodes.length; i++) {
+        if (nodes[i].id === activeInteractionNodeId) {
+            // For the active node, its position is controlled by drag, not repulsion here.
+            // But if applyRepulsion somehow changed its data (it shouldn't if fixedNodeId logic is correct), reflect that.
+            if (repulsedActiveNode && currentActiveNode && (Math.abs(currentActiveNode.x - repulsedActiveNode.x) > 0.1 || Math.abs(currentActiveNode.y - repulsedActiveNode.y) > 0.1)){
+                 // This case should ideally not be hit if fixedNodeId logic in applyRepulsion is perfect for not moving the fixed node.
+            }
+        } else {
+            if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
+                changed = true;
+                break;
+            }
+        }
+    }
+     if (!changed && currentActiveNode && repulsedActiveNode) { // Check if only the active node's reference changed but not others
+        if (currentActiveNode.x !== repulsedActiveNode.x || currentActiveNode.y !== repulsedActiveNode.y) {
+            // This indicates the active node's position *in the source array for repulsion* was changed by drag,
+            // and applyRepulsion correctly kept it fixed, but we still need to trigger setNodes if other nodes moved *relative to it*.
+            // The previous loop should catch if other nodes moved. This is more of a consistency check.
+        }
+    }
+
+
+    if (changed) {
+      const timeoutId = setTimeout(() => {
+        // We only update nodes that are NOT the activeInteractionNodeId from this effect,
+        // as the activeInteractionNodeId's position is managed by drag handlers.
+        setNodes(currentNodes => currentNodes.map(cn => {
+            if (cn.id === activeInteractionNodeId) return cn; // Keep active node's position from drag
+            const rn = repulsedNodes.find(r => r.id === cn.id);
+            return rn || cn; // Use repulsed position for non-active nodes
+        }));
       }, 0);
       return () => clearTimeout(timeoutId);
     }
@@ -541,8 +568,8 @@ export default function Home() {
 
       <div
         ref={containerRef}
-        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none"
-        style={{ height: `${CONTAINER_HEIGHT_PX}px` }} // Removed maxWidth here, Tailwind handles it
+        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden"
+        style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
       >
         <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
           {isClient && edges.map(edge => {
@@ -588,7 +615,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
-            zIndex: 1,
+            zIndex: activeInteractionNodeId === node.id ? 2 : 1, // Bring active node to front
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
