@@ -240,27 +240,7 @@ export default function Home() {
           loadedEdges = [];
         }
       }
-      
-      if (loadedNodes.length > 0 && containerWidth > 0) {
-        const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
-        if (mainNode) {
-            const deltaX = -mainNode.x;
-            const deltaY = -mainNode.y;
-            const adjustedNodes = loadedNodes.map(n => ({
-                ...n,
-                x: n.x + deltaX,
-                y: n.y + deltaY,
-            }));
-            setNodes(adjustedNodes);
-            saveNodesToLocalStorage(adjustedNodes); 
-            setOffsetX(containerWidth / 2);
-            setOffsetY(CONTAINER_HEIGHT_PX / 2);
-        } else {
-            setNodes(loadedNodes);
-        }
-      } else {
-         setNodes(loadedNodes);
-      }
+      setNodes(loadedNodes);
       setEdges(loadedEdges);
 
     } catch (error) {
@@ -268,7 +248,7 @@ export default function Home() {
       setNodes([]); 
       setEdges([]);
     }
-  }, [containerWidth, saveNodesToLocalStorage]);
+  }, []);
 
 
   useEffect(() => {
@@ -964,9 +944,7 @@ export default function Home() {
         >
           {/* Edges SVG - IS transformed, draws in world space */}
           <svg
-            className="absolute top-0 left-0 w-full h-full pointer-events-none" 
-            viewBox={isClient ? `${worldViewBox.x} ${worldViewBox.y} ${worldViewBox.width} ${worldViewBox.height}` : undefined}
-            preserveAspectRatio="none"
+            className="absolute top-0 left-0 w-full h-full pointer-events-none"
           >
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
@@ -1281,5 +1259,3 @@ export default function Home() {
     </main>
   );
 }
-
-    
