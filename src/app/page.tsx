@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -55,7 +55,7 @@ const REPULSION_STRENGTH = 0.5;
 const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
-const BASE_GRID_SIZE = 50; // Base size in world units
+const BASE_GRID_SIZE = 50; 
 
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
@@ -82,12 +82,60 @@ function formatTagsWithDates(tags: EdgeTag[]): string {
   }).join(', ');
 }
 
+const getGridLineSeparation = (scale: number): number => {
+  if (scale < 0.4) {
+    return BASE_GRID_SIZE * 4;
+  } else if (scale < 0.8) {
+    return BASE_GRID_SIZE * 2;
+  }
+  return BASE_GRID_SIZE;
+};
+
+const calculateVisibleGridLines = (
+  offsetX: number,
+  offsetY: number,
+  scale: number,
+  containerWidth: number,
+  containerHeight: number
+): { verticalLines: number[]; horizontalLines: number[]; worldView: { top: number; left: number; width: number; height: number } } => {
+  const worldViewLeft = -offsetX / scale;
+  const worldViewTop = -offsetY / scale;
+  const visibleWorldWidth = containerWidth / scale;
+  const visibleWorldHeight = containerHeight / scale;
+
+  const lineSeparation = getGridLineSeparation(scale);
+  const verticalLines: number[] = [];
+  const horizontalLines: number[] = [];
+
+  const startX = Math.floor(worldViewLeft / lineSeparation) * lineSeparation;
+  for (let x = startX; x < worldViewLeft + visibleWorldWidth; x += lineSeparation) {
+    verticalLines.push(x);
+  }
+
+  const startY = Math.floor(worldViewTop / lineSeparation) * lineSeparation;
+  for (let y = startY; y < worldViewTop + visibleWorldHeight; y += lineSeparation) {
+    horizontalLines.push(y);
+  }
+
+  return {
+    verticalLines,
+    horizontalLines,
+    worldView: {
+      top: worldViewTop,
+      left: worldViewLeft,
+      width: visibleWorldWidth,
+      height: visibleWorldHeight,
+    },
+  };
+};
+
+
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformedContentRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(768); // Default, updated on mount
+  const [containerWidth, setContainerWidth] = useState(768); 
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -130,8 +178,7 @@ export default function Home() {
 
   const [panXSliderLimits, setPanXSliderLimits] = useState({ min: -500, max: 500 });
   const [panYSliderLimits, setPanYSliderLimits] = useState({ min: -500, max: 500 });
-  const [effectiveGridSize, setEffectiveGridSize] = useState(BASE_GRID_SIZE);
-
+  
   useEffect(() => {
     if (containerRef.current) {
       setContainerWidth(containerRef.current.getBoundingClientRect().width);
@@ -157,8 +204,7 @@ export default function Home() {
     const worldY = (screenY - rect.top - offsetY) / scale;
     return { x: worldX, y: worldY };
   }, [offsetX, offsetY, scale]);
-
-  // Effect to calculate and update pan limits and effective grid size
+ 
   useEffect(() => {
     if (!containerRef.current || containerWidth === 0) return;
 
@@ -174,8 +220,7 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else {
-      // Default world extent when no nodes (or only active node)
-      contentMinXWorld = 0; // Centered around a nominal 0,0 world origin initially
+      contentMinXWorld = 0; 
       contentMaxXWorld = containerWidth / scale; 
       contentMinYWorld = 0;
       contentMaxYWorld = CONTAINER_HEIGHT_PX / scale;
@@ -218,15 +263,7 @@ export default function Home() {
     setOffsetX(currentOffsetX => Math.max(finalOffsetXMin, Math.min(finalOffsetXMax, currentOffsetX)));
     setOffsetY(currentOffsetY => Math.max(finalOffsetYMin, Math.min(finalOffsetYMax, currentOffsetY)));
 
-    if (scale < 0.4) {
-      setEffectiveGridSize(BASE_GRID_SIZE * 4);
-    } else if (scale < 0.8) {
-      setEffectiveGridSize(BASE_GRID_SIZE * 2);
-    } else {
-      setEffectiveGridSize(BASE_GRID_SIZE);
-    }
-
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]); // Added offsetX, offsetY to deps for clamping
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
 
 
   const createNode = () => {
@@ -266,7 +303,6 @@ export default function Home() {
       } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
 
       if (!placed) {
-        // Fallback: place at view center, potentially overlapping
         newNodeX = worldViewCenterX - newNodeDimension / 2;
         newNodeY = worldViewCenterY - newNodeDimension / 2;
       }
@@ -554,6 +590,8 @@ export default function Home() {
           if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
               continue; 
           }
+          if (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId) continue;
+
 
           const dimA = getNodeDimension(nodeA);
           const dimB = getNodeDimension(nodeB);
@@ -659,13 +697,12 @@ export default function Home() {
   const minScale = 0.1; 
   const maxScale = 1.5;
 
-  const worldViewTopLeftX = -offsetX / scale;
-  const worldViewTopLeftY = -offsetY / scale;
-  const visibleWorldWidth = containerWidth / scale;
-  const visibleWorldHeight = CONTAINER_HEIGHT_PX / scale;
-
-  const correctedPatternOffsetX = -(worldViewTopLeftX % effectiveGridSize);
-  const correctedPatternOffsetY = -(worldViewTopLeftY % effectiveGridSize);
+  const gridData = useMemo(() => {
+    if (!isClient || containerWidth === 0) { // Ensure containerWidth is non-zero
+      return { verticalLines: [], horizontalLines: [], worldView: { top: 0, left: 0, width: 0, height: 0 } };
+    }
+    return calculateVisibleGridLines(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
+  }, [isClient, offsetX, offsetY, scale, containerWidth]);
 
 
   return (
@@ -729,41 +766,41 @@ export default function Home() {
           }}
         >
           <svg 
-            width="100%" 
-            height="100%" 
-            className="absolute top-0 left-0 pointer-events-none z-0"
-            viewBox={`${worldViewTopLeftX} ${worldViewTopLeftY} ${visibleWorldWidth} ${visibleWorldHeight}`}
-            preserveAspectRatio="none"
-          >
-            <defs>
-              <pattern 
-                id="gridPattern" 
-                width={effectiveGridSize} 
-                height={effectiveGridSize} 
-                patternUnits="userSpaceOnUse"
-                x={correctedPatternOffsetX} 
-                y={correctedPatternOffsetY}
-              >
-                <path d={`M ${effectiveGridSize} 0 L 0 0 0 ${effectiveGridSize}`} fill="none" stroke="hsl(var(--border))" strokeWidth={0.5 / scale } opacity="0.5"/>
-              </pattern>
-            </defs>
-            <rect 
-              x={worldViewTopLeftX} 
-              y={worldViewTopLeftY} 
-              width={visibleWorldWidth} 
-              height={visibleWorldHeight} 
-              fill="url(#gridPattern)" 
-            />
-          </svg>
-
-          <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" 
-             style={{ 
+            className="absolute top-0 left-0 w-full h-full pointer-events-none"
+            style={{ 
                 width: `10000px`, 
                 height: `10000px`,
                 left: '-5000px', 
                 top: '-5000px',
             }}
           >
+            {/* Grid Lines - Rendered First to be in the Background */}
+            {isClient && gridData.verticalLines.map((lineX) => (
+              <line
+                key={`v-${lineX}`}
+                x1={5000 + lineX}
+                y1={5000 + gridData.worldView.top}
+                x2={5000 + lineX}
+                y2={5000 + gridData.worldView.top + gridData.worldView.height}
+                stroke="hsl(var(--border))"
+                strokeWidth={0.5 / scale} // Adjusts thickness with zoom
+                opacity="0.5"
+              />
+            ))}
+            {isClient && gridData.horizontalLines.map((lineY) => (
+              <line
+                key={`h-${lineY}`}
+                x1={5000 + gridData.worldView.left}
+                y1={5000 + lineY}
+                x2={5000 + gridData.worldView.left + gridData.worldView.width}
+                y2={5000 + lineY}
+                stroke="hsl(var(--border))"
+                strokeWidth={0.5 / scale} // Adjusts thickness with zoom
+                opacity="0.5"
+              />
+            ))}
+
+            {/* Edges */}
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
               const targetNode = nodes.find(n => n.id === edge.targetNodeId);
@@ -837,13 +874,10 @@ export default function Home() {
             const minFontSize = 6; 
             const baseNameFontSize = 16; 
             const baseTagFontSize = 10;
-
-            // Calculate font size in world units, then clamp to minFontSize (in screen pixels) after scaling
+            
             const dynamicNameFontSizeScreen = Math.max(minFontSize, baseNameFontSize * scale);
             const dynamicTagFontSizeScreen = Math.max(minFontSize, baseTagFontSize * scale);
             
-            // To apply this screen font size to an element within a scaled container,
-            // we need to inversely scale the font size.
             const finalNameFontSize = dynamicNameFontSizeScreen / scale;
             const finalTagFontSize = dynamicTagFontSizeScreen / scale;
 
@@ -1074,5 +1108,3 @@ export default function Home() {
     </main>
   );
 }
-
-    
