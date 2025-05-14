@@ -98,22 +98,34 @@ function calculateScreenGridLinePositions(
   // Calculate vertical lines
   // Formula for screenX of a world line: screenX = (k * worldSeparation) * scale + offsetX = k * screenSeparation + offsetX
   // We need k such that screenX is within or near [0, containerWidth]
-  const kMinX = Math.floor(-offsetX / screenSeparation) -1; // Start one line off-screen to the left
-  const kMaxX = Math.ceil((containerWidth - offsetX) / screenSeparation) + 1; // End one line off-screen to the right
+  // k_world = screenToWorld(screenX_container, 0).x / worldSeparation
+  // screenX_container = worldToScreen(k_world * worldSeparation, 0).x
+  // screenX_container = (k_world * worldSeparation) * scale + offsetX
+  // Let's find the k for the first line to the left (or on) the screen edge
+  // (k_min_world * worldSeparation) * scale + offsetX = 0  => k_min_world = -offsetX / (worldSeparation * scale)
+  // And for the last line to the right (or on) the screen edge
+  // (k_max_world * worldSeparation) * scale + offsetX = containerWidth => k_max_world = (containerWidth - offsetX) / (worldSeparation * scale)
 
-  for (let k = kMinX; k <= kMaxX; k++) {
-    const screenX = k * screenSeparation + offsetX;
-    verticalLines.push(screenX);
+  const firstVerticalWorldLine_k = Math.floor((-offsetX / scale) / worldSeparation) -1; // Start one line before it might be visible
+  const lastVerticalWorldLine_k = Math.ceil(((containerWidth - offsetX) / scale) / worldSeparation) +1; // End one line after it might be visible
+
+  for (let k = firstVerticalWorldLine_k; k <= lastVerticalWorldLine_k; k++) {
+    const worldX = k * worldSeparation;
+    const screenX = worldX * scale + offsetX;
+    if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) { // Add buffer
+        verticalLines.push(screenX);
+    }
   }
+  
+  const firstHorizontalWorldLine_k = Math.floor((-offsetY / scale) / worldSeparation) -1;
+  const lastHorizontalWorldLine_k = Math.ceil(((containerHeight - offsetY) / scale) / worldSeparation) +1;
 
-  // Calculate horizontal lines
-  // Formula for screenY of a world line: screenY = (k * worldSeparation) * scale + offsetY = k * screenSeparation + offsetY
-  const kMinY = Math.floor(-offsetY / screenSeparation) -1; // Start one line off-screen above
-  const kMaxY = Math.ceil((containerHeight - offsetY) / screenSeparation) + 1; // End one line off-screen below
-
-  for (let k = kMinY; k <= kMaxY; k++) {
-    const screenY = k * screenSeparation + offsetY;
-    horizontalLines.push(screenY);
+  for (let k = firstHorizontalWorldLine_k; k <= lastHorizontalWorldLine_k; k++) {
+    const worldY = k * worldSeparation;
+    const screenY = worldY * scale + offsetY;
+     if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) { // Add buffer
+        horizontalLines.push(screenY);
+    }
   }
   
   return { verticalLines, horizontalLines };
@@ -672,9 +684,7 @@ export default function Home() {
                 setNewEdgeTagsInput("");
                 setIsCreateEdgeDialogOpen(true);
             }
-            // Note: Node position save for dragged node happens after this block
         }
-        // Always save the potentially new position of the dragged node
         saveNodesToLocalStorage(nodes); 
 
       } else if (isLinkingModeActive && activeInteractionNodeId) { 
@@ -895,9 +905,9 @@ export default function Home() {
           className="absolute top-0 left-0 w-full h-full pointer-events-none z-[1]" 
           aria-hidden="true"
         >
-          {isClient && screenGridData.verticalLines.map((lineX) => (
+          {isClient && screenGridData.verticalLines.map((lineX, index) => (
             <line
-              key={`v-screen-${lineX}`}
+              key={`v-screen-${index}-${lineX}`}
               x1={lineX}
               y1={0}
               x2={lineX}
@@ -907,9 +917,9 @@ export default function Home() {
               opacity="0.3"
             />
           ))}
-          {isClient && screenGridData.horizontalLines.map((lineY) => (
+          {isClient && screenGridData.horizontalLines.map((lineY, index) => (
             <line
-              key={`h-screen-${lineY}`}
+              key={`h-screen-${index}-${lineY}`}
               x1={0}
               y1={lineY}
               x2={containerWidth}
@@ -930,7 +940,7 @@ export default function Home() {
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
             transformOrigin: '0 0',
             willChange: 'transform', 
-            // zIndex: 10, // Ensures nodes/edges are above the screen-space grid
+            zIndex: 2, // Ensure content is above grid
           }}
         >
           {/* Edges SVG - IS transformed, draws in world space */}
@@ -982,7 +992,7 @@ export default function Home() {
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))",
               color: "hsl(var(--card-foreground))",
-              zIndex: activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10), // Ensure dragged node is above others, but grid is lowest
+              zIndex: activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10),
               borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
