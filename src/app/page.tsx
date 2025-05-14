@@ -29,15 +29,18 @@ interface Node {
   birthday?: string;
 }
 
-const BASE_NODE_WIDTH = 144; // Used for initial placement logic, w-36
-const CATEGORY_NODE_SIZE_CLASS = "w-40 h-40"; // 160px
-const ENTITY_NODE_SIZE_CLASS = "w-32 h-32"; // 128px
+const CATEGORY_NODE_DIMENSION = 160; // Corresponds to w-40 h-40 (10rem * 16px/rem)
+const ENTITY_NODE_DIMENSION = 128;   // Corresponds to w-32 h-32 (8rem * 16px/rem)
+
+const CATEGORY_NODE_SIZE_CLASS = "w-40 h-40";
+const ENTITY_NODE_SIZE_CLASS = "w-32 h-32";
 
 const CONTAINER_MAX_WIDTH_PX = 768;
 const CONTAINER_HEIGHT_PX = 500;
 
 const PRESS_HOLD_THRESHOLD = 700; // ms for press and hold
 const DRAG_MOVE_THRESHOLD = 10; // pixels to differentiate click from drag
+const MAX_PLACEMENT_ATTEMPTS = 30; // Max attempts to find a non-overlapping spot
 
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -59,7 +62,7 @@ export default function Home() {
   const [editNodeBirthday, setEditNodeBirthday] = useState("");
 
   // Interaction States
-  const [activeNodeInteraction, setActiveNodeInteraction] = useState<string | null>(null); // ID of node being interacted with
+  const [activeNodeInteraction, setActiveNodeInteraction] = useState<string | null>(null);
   const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
   const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -69,17 +72,55 @@ export default function Home() {
   const createNode = () => {
     if (newNodeName) {
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      const newNode: Node = {
+      
+      let newNodeX = 0;
+      let newNodeY = 0;
+      let placed = false;
+      let attempts = 0;
+
+      const newNodeDimension = newNodeType === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
+
+      do {
+        newNodeX = Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - newNodeDimension));
+        newNodeY = Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - newNodeDimension));
+        let overlap = false;
+        for (const existingNode of nodes) {
+          const existingNodeDimension = existingNode.type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
+          // AABB collision detection (Axis-Aligned Bounding Box)
+          if (
+            newNodeX < existingNode.x + existingNodeDimension &&
+            newNodeX + newNodeDimension > existingNode.x &&
+            newNodeY < existingNode.y + existingNodeDimension &&
+            newNodeY + newNodeDimension > existingNode.y
+          ) {
+            overlap = true;
+            break;
+          }
+        }
+        if (!overlap) {
+          placed = true;
+        }
+        attempts++;
+      } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
+
+      if (!placed) {
+        // Fallback if no non-overlapping spot is found after max attempts
+        // Place it at the last attempted random position, which might overlap.
+        // Or, you could place it at a default corner, or notify the user.
+        console.warn(`Could not find a non-overlapping position for new node "${newNodeName}" after ${MAX_PLACEMENT_ATTEMPTS} attempts. Placing at last attempted position.`);
+      }
+
+      const newNodeToAdd: Node = {
         id: crypto.randomUUID(),
         name: newNodeName,
         description: newNodeDescription,
         tags: tagsArray,
-        x: Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - BASE_NODE_WIDTH)), // Use base width for placement
-        y: Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - BASE_NODE_WIDTH)), // Use base height for placement
+        x: newNodeX,
+        y: newNodeY,
         type: newNodeType,
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
-      setNodes([...nodes, newNode]);
+      setNodes([...nodes, newNodeToAdd]);
       setNewNodeName("");
       setNewNodeDescription("");
       setNewNodeTags("");
@@ -123,26 +164,26 @@ export default function Home() {
     node: Node
   ) => {
     if (event.type.startsWith('touch')) {
-      event.preventDefault();
+      event.preventDefault(); // Prevent default touch actions like scrolling
     }
-
+  
     setActiveNodeInteraction(node.id);
     const point = 'touches' in event ? event.touches[0] : event;
     setInteractionStartPos({ x: point.clientX, y: point.clientY });
-    setIsDragging(false); // Reset dragging state at the start of interaction
-
+    setIsDragging(false);
+  
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
-
+  
     const timer = setTimeout(() => {
+      // Check if the interaction is still active on the same node and not dragging
       if (activeNodeInteraction === node.id && !isDragging && !showSearchBar) {
-        setShowSearchBar(true);
-        setPressHoldTimer(null);
-        // activeNodeInteraction is intentionally not cleared here; search bar might need context
+        setShowSearchBar(true); 
+        // activeNodeInteraction is kept for search bar context
       }
+      setPressHoldTimer(null); // Timer has served its purpose
     }, PRESS_HOLD_THRESHOLD);
     setPressHoldTimer(timer);
   };
-
 
   useEffect(() => {
     const handleInteractionMove = (event: MouseEvent | TouchEvent) => {
@@ -151,16 +192,17 @@ export default function Home() {
       const point = 'touches' in event ? event.touches[0] : event;
       if (!point) return; 
 
-      const dx = Math.abs(point.clientX - interactionStartPos.x);
-      const dy = Math.abs(point.clientY - interactionStartPos.y);
+      const dx = point.clientX - interactionStartPos.x;
+      const dy = point.clientY - interactionStartPos.y;
 
-      if (dx > DRAG_MOVE_THRESHOLD || dy > DRAG_MOVE_THRESHOLD) {
+      if (Math.abs(dx) > DRAG_MOVE_THRESHOLD || Math.abs(dy) > DRAG_MOVE_THRESHOLD) {
         setIsDragging(true);
         if (pressHoldTimer) {
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
-        // Future: Implement node dragging logic (repositioning) here
+        // Node dragging logic (repositioning) would go here in a future step
+        // For now, just setting isDragging prevents edit/search bar
       }
     };
 
@@ -171,23 +213,21 @@ export default function Home() {
       }
 
       if (activeNodeInteraction && !isDragging && !showSearchBar) {
+        // This was a click/tap without dragging before press-hold threshold or search bar shown
         const node = nodes.find(n => n.id === activeNodeInteraction);
         if (node) {
           openEditDialog(node);
         }
       }
       
-      // Reset interaction states appropriately
-      if (showSearchBar) {
-        // If search bar was shown, press-hold was successful.
-        // activeNodeInteraction is kept for the search bar context. It's cleared when search is used/closed.
-      } else {
-        // If search bar was NOT shown, it was either a click or a drag.
-        // In either case, the specific node interaction sequence is over for opening edit dialog.
-        setActiveNodeInteraction(null);
+      // Reset interaction states
+      // activeNodeInteraction is NOT cleared if showSearchBar is true, as search might need context.
+      // It's cleared when the search bar is closed or an action is taken from it.
+      if (!showSearchBar) {
+         setActiveNodeInteraction(null);
       }
       setInteractionStartPos(null);
-      setIsDragging(false); // Always reset dragging state at the end of an interaction sequence
+      setIsDragging(false);
     };
 
     window.addEventListener('mousemove', handleInteractionMove);
@@ -220,28 +260,30 @@ export default function Home() {
       >
         {isClient && nodes.map((node) => {
           const nodeSizeClass = node.type === 'category' ? CATEGORY_NODE_SIZE_CLASS : ENTITY_NODE_SIZE_CLASS;
+          const nodeDimension = node.type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
           const nodeStyles: React.CSSProperties = {
             backgroundColor: "hsl(var(--node-color))",
             left: `${node.x}px`,
             top: `${node.y}px`,
+            width: `${nodeDimension}px`,
+            height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
-            nodeStyles.borderWidth = '2px'; // Or '3px' for more emphasis
+            nodeStyles.borderWidth = '2px';
           }
 
           return (
             <div
               key={node.id}
-              className={`absolute ${nodeSizeClass} p-3 rounded-full flex flex-col items-center justify-center text-center cursor-pointer shadow-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 select-none border`}
+              className={`absolute p-3 rounded-full flex flex-col items-center justify-center text-center cursor-pointer shadow-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 select-none border`}
               style={nodeStyles}
               onMouseDown={(e) => handleNodeInteractionStart(e, node)}
               onTouchStart={(e) => handleNodeInteractionStart(e, node)}
               title={`Interact with ${node.name}`}
             >
               <h2 className="text-md font-semibold truncate w-full">{node.name}</h2>
-              {/* Type display removed as per request */}
               {node.tags.length > 0 && (
                 <div className="mt-1 flex flex-wrap justify-center gap-1">
                   {node.tags.slice(0, 2).map(tag => (
@@ -266,17 +308,13 @@ export default function Home() {
               placeholder="Search nodes or type to connect..."
               className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
               onFocus={() => { 
-                // If search bar is focused, ensure node interaction that triggered it is conceptually over
-                // but activeNodeInteraction might still be useful for search context if needed later.
-                // For now, clearing timer is key.
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
-                // Consider if setActiveNodeInteraction(null) is needed here or handled by search logic
               }}
             />
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveNodeInteraction(null); // Clear any lingering interaction state when search is closed
+                setActiveNodeInteraction(null); 
               }}
               variant="ghost"
               size="sm"
@@ -456,5 +494,3 @@ export default function Home() {
     </main>
   );
 }
-
-    
