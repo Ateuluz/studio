@@ -96,23 +96,13 @@ function calculateScreenGridLinePositions(
   const horizontalLines: number[] = [];
 
   // Calculate vertical lines
-  // Formula for screenX of a world line: screenX = (k * worldSeparation) * scale + offsetX = k * screenSeparation + offsetX
-  // We need k such that screenX is within or near [0, containerWidth]
-  // k_world = screenToWorld(screenX_container, 0).x / worldSeparation
-  // screenX_container = worldToScreen(k_world * worldSeparation, 0).x
-  // screenX_container = (k_world * worldSeparation) * scale + offsetX
-  // Let's find the k for the first line to the left (or on) the screen edge
-  // (k_min_world * worldSeparation) * scale + offsetX = 0  => k_min_world = -offsetX / (worldSeparation * scale)
-  // And for the last line to the right (or on) the screen edge
-  // (k_max_world * worldSeparation) * scale + offsetX = containerWidth => k_max_world = (containerWidth - offsetX) / (worldSeparation * scale)
-
-  const firstVerticalWorldLine_k = Math.floor((-offsetX / scale) / worldSeparation) -1; // Start one line before it might be visible
-  const lastVerticalWorldLine_k = Math.ceil(((containerWidth - offsetX) / scale) / worldSeparation) +1; // End one line after it might be visible
+  const firstVerticalWorldLine_k = Math.floor((-offsetX / scale) / worldSeparation) -1; 
+  const lastVerticalWorldLine_k = Math.ceil(((containerWidth - offsetX) / scale) / worldSeparation) +1; 
 
   for (let k = firstVerticalWorldLine_k; k <= lastVerticalWorldLine_k; k++) {
     const worldX = k * worldSeparation;
     const screenX = worldX * scale + offsetX;
-    if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) { // Add buffer
+    if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) { 
         verticalLines.push(screenX);
     }
   }
@@ -123,7 +113,7 @@ function calculateScreenGridLinePositions(
   for (let k = firstHorizontalWorldLine_k; k <= lastHorizontalWorldLine_k; k++) {
     const worldY = k * worldSeparation;
     const screenY = worldY * scale + offsetY;
-     if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) { // Add buffer
+     if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) { 
         horizontalLines.push(screenY);
     }
   }
@@ -258,7 +248,7 @@ export default function Home() {
       setNodes([]); 
       setEdges([]);
     }
-  }, []);
+  }, [saveNodesToLocalStorage, saveEdgesToLocalStorage]);
 
 
   useEffect(() => {
@@ -902,7 +892,7 @@ export default function Home() {
       >
         {/* Grid SVG - NOT transformed by pan/zoom, drawn in screen space */}
         <svg
-          className="absolute top-0 left-0 w-full h-full pointer-events-none z-[1]" 
+          className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
           aria-hidden="true"
         >
           {isClient && screenGridData.verticalLines.map((lineX, index) => (
