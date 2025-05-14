@@ -48,9 +48,9 @@ const DRAG_MOVE_THRESHOLD = 10;
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
 // Constants for repulsion
-const REPULSION_STRENGTH = 0.5; // How much to move nodes per iteration step
-const MIN_SEPARATION = 15;      // Minimum desired pixel separation between node *edges*
-const REPULSION_ITERATIONS = 10;// Number of passes to settle positions each time repulsion is applied
+const REPULSION_STRENGTH = 0.5; 
+const MIN_SEPARATION = 15;      
+const REPULSION_ITERATIONS = 10;
 
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -109,7 +109,6 @@ export default function Home() {
       let attempts = 0;
       const newNodeDimension = getNodeDimension(newNodeType);
 
-      // Initial placement logic (already good at avoiding overlap on creation)
       do {
         newNodeX = Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - newNodeDimension));
         newNodeY = Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - newNodeDimension));
@@ -144,7 +143,7 @@ export default function Home() {
         type: newNodeType,
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
-      setNodes(prevNodes => [...prevNodes, newNodeToAdd]); // Repulsion useEffect will handle adjustment
+      setNodes(prevNodes => [...prevNodes, newNodeToAdd]);
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
     }
@@ -157,7 +156,7 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null);
+    setActiveInteractionNodeId(null); 
   }, []);
 
   const saveNodeChanges = () => {
@@ -229,7 +228,6 @@ export default function Home() {
     setPressHoldTimer(timer);
   };
 
-  // Main interaction useEffect (mouse/touch move and end)
   useEffect(() => {
     const handleInteractionMove = (event: MouseEvent | TouchEvent) => {
       if (!activeInteractionNodeId || !interactionStartPos || !dragOffset || !containerRef.current) return;
@@ -296,7 +294,7 @@ export default function Home() {
       }
       const containerRect = containerRef.current.getBoundingClientRect();
 
-      if (linkingLinePreview && linkingSourceNodeId) {
+      if (linkingLinePreview && linkingSourceNodeId) { // Finished a press-hold-drag for linking
         const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
         if(sourceNode){
             let targetNode: Node | null = null;
@@ -317,7 +315,7 @@ export default function Home() {
                 setNewEdgeDataSourceNodeId(linkingSourceNodeId);
                 setNewEdgeDataTargetNodeId(targetNode.id);
                 setIsCreateEdgeDialogOpen(true);
-            } else {
+            } else { // Released in empty space after link attempt: move node
                 const nodeDim = getNodeDimension(sourceNode);
                 let newX = (point.clientX - containerRect.left) - (dragOffset?.x || 0) ;
                 let newY = (point.clientY - containerRect.top) - (dragOffset?.y || 0);
@@ -327,11 +325,11 @@ export default function Home() {
                 setNodes(prevNodes => prevNodes.map(n => n.id === linkingSourceNodeId ? {...n, x: newX, y: newY} : n));
             }
         }
-      } else if (isDraggingForReposition) {
+      } else if (isDraggingForReposition) { // Finished a simple drag for repositioning
         const draggedNodeId = activeInteractionNodeId;
         const draggedNode = nodes.find(n => n.id === draggedNodeId);
 
-        if (draggedNode) {
+        if (draggedNode) { // Check if dropped on another node for edge creation
             const cursorReleaseX = point.clientX - containerRect.left;
             const cursorReleaseY = point.clientY - containerRect.top;
 
@@ -352,10 +350,11 @@ export default function Home() {
                 setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
                 setIsCreateEdgeDialogOpen(true);
             }
+            // Node position is already updated during drag by handleInteractionMove
         }
-      } else if (isLinkingModeActive && activeInteractionNodeId) {
+      } else if (isLinkingModeActive && activeInteractionNodeId) { // Press-hold completed, no drag -> show search
         setShowSearchBar(true);
-      } else if (activeInteractionNodeId && !isDraggingForReposition && !showSearchBar) {
+      } else if (activeInteractionNodeId && !isDraggingForReposition && !showSearchBar) { // Simple click/tap
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
@@ -388,13 +387,13 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, edges, getNodeDimension, setNodes]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, edges, getNodeDimension]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
     if (currentNodes.length < 2) return currentNodes;
 
-    let newNodes = currentNodes.map(n => ({ ...n })); // Work with a copy
+    let newNodes = currentNodes.map(n => ({ ...n })); 
 
     for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
       let systemMoved = false;
@@ -417,88 +416,69 @@ export default function Home() {
           const dy = centerBy - centerAy;
           const distanceSquared = dx * dx + dy * dy;
 
-          // Avoid square root until necessary for performance
           const targetSeparation = radiusA + radiusB + MIN_SEPARATION;
           const targetSeparationSquared = targetSeparation * targetSeparation;
 
           if (distanceSquared < targetSeparationSquared && distanceSquared > 0) {
-            const distance = Math.sqrt(distanceSquared); // Now calculate sqrt
+            const distance = Math.sqrt(distanceSquared); 
             const overlap = targetSeparation - distance;
-
-            // Make force stronger for larger overlaps, but with REPULSION_STRENGTH as a coefficient
             const forceMagnitude = overlap * REPULSION_STRENGTH;
-
             const normDx = dx / distance;
             const normDy = dy / distance;
 
-            let moveAx = 0, moveAy = 0, moveBx = 0, moveBy = 0;
+            // If either node is the fixedNodeId, no repulsion force is applied by this pair.
+            // This prevents the selected node from pushing others, aiding edge creation.
+            if (nodeA.id !== fixedNodeId && nodeB.id !== fixedNodeId) {
+                const moveAx = -normDx * forceMagnitude / 2;
+                const moveAy = -normDy * forceMagnitude / 2;
+                const moveBx = normDx * forceMagnitude / 2;
+                const moveBy = normDy * forceMagnitude / 2;
 
-            if (nodeA.id === fixedNodeId) {
-              moveBx = normDx * forceMagnitude;
-              moveBy = normDy * forceMagnitude;
-            } else if (nodeB.id === fixedNodeId) {
-              moveAx = -normDx * forceMagnitude;
-              moveAy = -normDy * forceMagnitude;
-            } else {
-              moveAx = -normDx * forceMagnitude / 2;
-              moveAy = -normDy * forceMagnitude / 2;
-              moveBx = normDx * forceMagnitude / 2;
-              moveBy = normDy * forceMagnitude / 2;
-            }
+                // Apply movement to nodeA (which is not fixedNodeId here)
+                const prevXA = nodeA.x;
+                const prevYA = nodeA.y;
+                nodeA.x += moveAx;
+                nodeA.y += moveAy;
+                nodeA.x = Math.max(0, Math.min(nodeA.x, CONTAINER_MAX_WIDTH_PX - dimA));
+                nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
+                if (nodeA.x !== prevXA || nodeA.y !== prevYA) systemMoved = true;
 
-            if (nodeA.id !== fixedNodeId) {
-              const prevX = nodeA.x;
-              const prevY = nodeA.y;
-              nodeA.x += moveAx;
-              nodeA.y += moveAy;
-              nodeA.x = Math.max(0, Math.min(nodeA.x, CONTAINER_MAX_WIDTH_PX - dimA));
-              nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
-              if (nodeA.x !== prevX || nodeA.y !== prevY) systemMoved = true;
-            }
-
-            if (nodeB.id !== fixedNodeId) {
-              const prevX = nodeB.x;
-              const prevY = nodeB.y;
-              nodeB.x += moveBx;
-              nodeB.y += moveBy;
-              nodeB.x = Math.max(0, Math.min(nodeB.x, CONTAINER_MAX_WIDTH_PX - dimB));
-              nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
-              if (nodeB.x !== prevX || nodeB.y !== prevY) systemMoved = true;
+                // Apply movement to nodeB (which is not fixedNodeId here)
+                const prevXB = nodeB.x;
+                const prevYB = nodeB.y;
+                nodeB.x += moveBx;
+                nodeB.y += moveBy;
+                nodeB.x = Math.max(0, Math.min(nodeB.x, CONTAINER_MAX_WIDTH_PX - dimB));
+                nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
+                if (nodeB.x !== prevXB || nodeB.y !== prevYB) systemMoved = true;
             }
           }
         }
       }
-      if (!systemMoved && iter > 0) break; // If no nodes moved in this iteration, system is stable
+      if (!systemMoved && iter > 0) break; 
     }
     return newNodes;
   }, [getNodeDimension]);
 
 
-  // useEffect for applying repulsion
   useEffect(() => {
     if (nodes.length < 2) return;
-
-    // fixedNodeId is activeInteractionNodeId if a node is being dragged/interacted with
-    // otherwise, it's null, meaning all nodes can be repelled.
+    
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
 
-    // Check if positions actually changed significantly to prevent unnecessary re-renders
     let changed = false;
-    if (nodes.length === repulsedNodes.length) { // Basic check
+    if (nodes.length === repulsedNodes.length) { 
         for (let i = 0; i < nodes.length; i++) {
-            // Using a small epsilon for float comparisons might be better, but direct check for now
             if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
                 changed = true;
                 break;
             }
         }
     } else {
-        changed = true; // Length changed, definitely update
+        changed = true; 
     }
 
-
     if (changed) {
-      // Defer state update slightly to avoid tight loops with interaction effects
       const timeoutId = setTimeout(() => {
         setNodes(repulsedNodes);
       }, 0);
@@ -563,7 +543,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
-            zIndex: 1,
+            zIndex: 1, 
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
@@ -610,7 +590,7 @@ export default function Home() {
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null);
+                setActiveInteractionNodeId(null); 
               }}
               variant="ghost"
               size="sm"
@@ -719,7 +699,7 @@ export default function Home() {
           if (!isOpen) {
             setNewEdgeDataSourceNodeId(null);
             setNewEdgeDataTargetNodeId(null);
-            setActiveInteractionNodeId(null);
+            setActiveInteractionNodeId(null); 
           }
       }}>
         <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
