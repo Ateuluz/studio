@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -156,7 +157,7 @@ export default function Home() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformedContentRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(768); // Default width
+  const [containerWidth, setContainerWidth] = useState(0); // Default width
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -221,38 +222,66 @@ export default function Home() {
     }
   }, []);
   
-  const loadDataFromLocalStorage = useCallback(() => {
+ const loadDataFromLocalStorage = useCallback(() => {
+    if (typeof window === 'undefined') return; // Ensure localStorage is available
+
+    let loadedNodes: Node[] = [];
+    let loadedEdges: Edge[] = [];
+
     try {
       const storedNodesString = localStorage.getItem(NODES_KEY);
-      let loadedNodes: Node[] = [];
       if (storedNodesString) {
         try {
-          loadedNodes = JSON.parse(storedNodesString);
+          loadedNodes = JSON.parse(storedNodesString) as Node[];
         } catch (e) {
           console.error("Error parsing nodes from localStorage:", e);
-          loadedNodes = []; 
         }
       }
-     
+
       const storedEdgesString = localStorage.getItem(EDGES_KEY);
-      let loadedEdges: Edge[] = [];
       if (storedEdgesString) {
-         try {
-          loadedEdges = JSON.parse(storedEdgesString);
+        try {
+          loadedEdges = JSON.parse(storedEdgesString) as Edge[];
         } catch (e) {
           console.error("Error parsing edges from localStorage:", e);
-          loadedEdges = [];
         }
       }
-      setNodes(loadedNodes);
-      setEdges(loadedEdges);
-
     } catch (error) {
       console.error("Failed to load data from localStorage during general operation:", error);
-      setNodes([]); 
-      setEdges([]);
     }
-  }, []);
+
+    if (loadedNodes.length > 0) {
+      const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
+      if (mainNode) {
+        const deltaX = -mainNode.x;
+        const deltaY = -mainNode.y;
+
+        if (deltaX !== 0 || deltaY !== 0) { // Only adjust if not already at origin
+          const adjustedNodes = loadedNodes.map(node => ({
+            ...node,
+            x: node.x + deltaX,
+            y: node.y + deltaY,
+          }));
+          setNodes(adjustedNodes);
+          saveNodesToLocalStorage(adjustedNodes); // Persist the adjusted positions
+        } else {
+          setNodes(loadedNodes);
+        }
+        
+        // Center viewport on the Main node (now at 0,0)
+        if (containerWidth > 0) {
+          setOffsetX(containerWidth / 2);
+          setOffsetY(CONTAINER_HEIGHT_PX / 2);
+        }
+      } else {
+        setNodes(loadedNodes);
+      }
+    } else {
+      setNodes([]); // Ensure nodes state is an empty array if nothing loaded
+    }
+    setEdges(loadedEdges);
+
+  }, [containerWidth, saveNodesToLocalStorage, setNodes, setEdges, setOffsetX, setOffsetY]);
 
 
   useEffect(() => {
@@ -370,7 +399,9 @@ export default function Home() {
     if (newNodeName && containerWidth > 0 && scale !== 0) {
       
       let currentNodesForCreation = [...nodes];
-      if (newNodeTags.includes("Main")) {
+      const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
+
+      if (tagsArray.includes("Main")) {
         currentNodesForCreation = currentNodesForCreation.map(n => {
           if (n.tags.includes("Main")) {
             return { ...n, tags: n.tags.filter(t => t !== "Main") };
@@ -378,7 +409,6 @@ export default function Home() {
           return n;
         });
       }
-      const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
 
       let newNodeX = 0;
       let newNodeY = 0;
@@ -639,11 +669,7 @@ export default function Home() {
       const worldMouseReleasePos = screenToWorld(point.clientX, point.clientY);
       let targetNodeUnderneath: Node | null = null;
 
-      // Iterate over nodes to find if the release point is over any node
-      // that is NOT the node currently being interacted with.
       for (const node of nodes) {
-        // If the current node in the loop is the one being dragged/interacted with, skip it.
-        // We are looking for a *different* node to drop onto or link to.
         if (node.id === activeInteractionNodeId) {
           continue;
         }
@@ -653,19 +679,12 @@ export default function Home() {
           worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
           worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim
         ) {
-          // A potential target node is found under the cursor, and it's not the active node.
-          // If in linking mode, an additional check might be needed if linkingSourceNodeId
-          // could differ from activeInteractionNodeId.
-          // However, activeInteractionNodeId is usually the linkingSourceNodeId in linking mode.
           if (isLinkingModeActive && linkingSourceNodeId && node.id === linkingSourceNodeId) {
-            // This case is unlikely if activeInteractionNodeId is correctly set as linkingSourceNodeId,
-            // as it would be caught by the `node.id === activeInteractionNodeId` check above.
-            // This is a safeguard for linking mode specifically.
             continue;
           }
           
           targetNodeUnderneath = node;
-          break; // Found a suitable, different node
+          break; 
         }
       }
 
@@ -699,9 +718,9 @@ export default function Home() {
                 saveNodesToLocalStorage(updatedNodes); 
             }
         }
-      } else if (isDraggingForReposition) { 
+      } else if (isDraggingForReposition && activeInteractionNodeId) { 
         const draggedNodeId = activeInteractionNodeId; 
-        if (draggedNodeId && targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
+        if (targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
             const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
             if (existingEdge) {
                 setEditingEdge(existingEdge);
@@ -1294,3 +1313,4 @@ export default function Home() {
     </main>
   );
 }
+
