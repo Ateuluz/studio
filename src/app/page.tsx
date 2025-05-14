@@ -34,21 +34,23 @@ interface Edge {
   sourceNodeId: string;
   targetNodeId: string;
   tags: string[];
-  creationDate: string; 
+  creationDate: string;
 }
 
-const CATEGORY_NODE_DIMENSION = 160; 
-const ENTITY_NODE_DIMENSION = 128;   
+const CATEGORY_NODE_DIMENSION = 160;
+const ENTITY_NODE_DIMENSION = 128;
 
-const CATEGORY_NODE_SIZE_CLASS = "w-40 h-40";
-const ENTITY_NODE_SIZE_CLASS = "w-32 h-32";
+const CONTAINER_MAX_WIDTH_PX = 768;
+const CONTAINER_HEIGHT_PX = 500;
 
-const CONTAINER_MAX_WIDTH_PX = 768; // Max width of the node container
-const CONTAINER_HEIGHT_PX = 500;    // Height of the node container
-
-const PRESS_HOLD_THRESHOLD = 700; 
-const DRAG_MOVE_THRESHOLD = 10; 
+const PRESS_HOLD_THRESHOLD = 700;
+const DRAG_MOVE_THRESHOLD = 10;
 const MAX_PLACEMENT_ATTEMPTS = 30;
+
+// Constants for repulsion
+const REPULSION_STRENGTH = 0.5; // How much to move nodes per iteration step
+const MIN_SEPARATION = 15;      // Minimum desired pixel separation between node *edges*
+const REPULSION_ITERATIONS = 10;// Number of passes to settle positions each time repulsion is applied
 
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -84,19 +86,19 @@ export default function Home() {
   const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
   const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null);
-  
+
   const [isDraggingForReposition, setIsDraggingForReposition] = useState(false);
-  const [isLinkingModeActive, setIsLinkingModeActive] = useState(false); // True after press-hold completes
-  const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null); // Node from which linking drag started
+  const [isLinkingModeActive, setIsLinkingModeActive] = useState(false);
+  const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null);
   const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
 
   const [showSearchBar, setShowSearchBar] = useState(false);
 
 
-  const getNodeDimension = (nodeOrType: Node | Node['type']) => {
+  const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
     const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
     return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
-  };
+  }, []);
 
   const createNode = () => {
     if (newNodeName) {
@@ -107,6 +109,7 @@ export default function Home() {
       let attempts = 0;
       const newNodeDimension = getNodeDimension(newNodeType);
 
+      // Initial placement logic (already good at avoiding overlap on creation)
       do {
         newNodeX = Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - newNodeDimension));
         newNodeY = Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - newNodeDimension));
@@ -128,7 +131,7 @@ export default function Home() {
       } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
 
       if (!placed) {
-        console.warn(`Could not find a non-overlapping position for new node "${newNodeName}" after ${MAX_PLACEMENT_ATTEMPTS} attempts.`);
+        console.warn(`Could not find a non-overlapping position for new node "${newNodeName}" after ${MAX_PLACEMENT_ATTEMPTS} attempts. Placing at last attempted position.`);
       }
 
       const newNodeToAdd: Node = {
@@ -141,7 +144,7 @@ export default function Home() {
         type: newNodeType,
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
-      setNodes([...nodes, newNodeToAdd]);
+      setNodes(prevNodes => [...prevNodes, newNodeToAdd]); // Repulsion useEffect will handle adjustment
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
     }
@@ -154,8 +157,8 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null); 
-  }, []); 
+    setActiveInteractionNodeId(null);
+  }, []);
 
   const saveNodeChanges = () => {
     if (editingNode && editNodeName) {
@@ -194,48 +197,46 @@ export default function Home() {
     node: Node
   ) => {
     if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
-  
+
     setActiveInteractionNodeId(node.id);
     const point = 'touches' in event ? event.touches[0] : event;
     setInteractionStartPos({ x: point.clientX, y: point.clientY });
-    // Calculate dragOffset relative to the container's top-left for consistency
+
     if (containerRef.current) {
         const containerRect = containerRef.current.getBoundingClientRect();
-        setDragOffset({ 
-            x: point.clientX - containerRect.left - node.x, 
-            y: point.clientY - containerRect.top - node.y 
+        setDragOffset({
+            x: point.clientX - containerRect.left - node.x,
+            y: point.clientY - containerRect.top - node.y
         });
     } else {
-        // Fallback if containerRef is not yet available (should be rare)
         setDragOffset({ x: point.clientX - node.x, y: point.clientY - node.y });
     }
-    
+
     setIsDraggingForReposition(false);
     setIsLinkingModeActive(false);
     setLinkingSourceNodeId(null);
     setLinkingLinePreview(null);
-  
+
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
-  
+
     const timer = setTimeout(() => {
-      // Check if still the active node, not already dragging for reposition, and search not shown
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
-        setIsLinkingModeActive(true); 
-        setLinkingSourceNodeId(node.id); 
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) {
+        setIsLinkingModeActive(true);
+        setLinkingSourceNodeId(node.id);
       }
       setPressHoldTimer(null);
     }, PRESS_HOLD_THRESHOLD);
     setPressHoldTimer(timer);
   };
 
+  // Main interaction useEffect (mouse/touch move and end)
   useEffect(() => {
     const handleInteractionMove = (event: MouseEvent | TouchEvent) => {
       if (!activeInteractionNodeId || !interactionStartPos || !dragOffset || !containerRef.current) return;
       if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
 
-
       const point = 'touches' in event ? event.touches[0] : event;
-      if (!point) return; 
+      if (!point) return;
 
       const containerRect = containerRef.current.getBoundingClientRect();
       const relativeCursorX = point.clientX - containerRect.left;
@@ -251,7 +252,7 @@ export default function Home() {
         }
 
         if (isLinkingModeActive && linkingSourceNodeId) {
-          setIsDraggingForReposition(false); 
+          setIsDraggingForReposition(false);
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if (sourceNode) {
             const sourceDim = getNodeDimension(sourceNode);
@@ -267,10 +268,9 @@ export default function Home() {
           setNodes(prevNodes => prevNodes.map(n => {
             if (n.id === activeInteractionNodeId) {
               const nodeDim = getNodeDimension(n);
-              // Use dragOffset calculated relative to container for correct positioning
               let newX = relativeCursorX - dragOffset.x;
               let newY = relativeCursorY - dragOffset.y;
-              
+
               newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
               newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
               return { ...n, x: newX, y: newY };
@@ -289,15 +289,14 @@ export default function Home() {
 
       const point = 'changedTouches' in event ? event.changedTouches[0] : event;
       if (!point || !containerRef.current) {
-        if (!showSearchBar && !isCreateEdgeDialogOpen) setActiveInteractionNodeId(null);
+         if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen) setActiveInteractionNodeId(null);
         setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
         setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
         return;
       }
       const containerRect = containerRef.current.getBoundingClientRect();
 
-
-      if (linkingLinePreview && linkingSourceNodeId) { 
+      if (linkingLinePreview && linkingSourceNodeId) {
         const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
         if(sourceNode){
             let targetNode: Node | null = null;
@@ -318,9 +317,8 @@ export default function Home() {
                 setNewEdgeDataSourceNodeId(linkingSourceNodeId);
                 setNewEdgeDataTargetNodeId(targetNode.id);
                 setIsCreateEdgeDialogOpen(true);
-            } else { 
+            } else {
                 const nodeDim = getNodeDimension(sourceNode);
-                // Use relativeCursorX/Y and dragOffset for correct new position
                 let newX = (point.clientX - containerRect.left) - (dragOffset?.x || 0) ;
                 let newY = (point.clientY - containerRect.top) - (dragOffset?.y || 0);
 
@@ -340,7 +338,6 @@ export default function Home() {
             let targetNodeUnderneath: Node | null = null;
             for (const otherNode of nodes) {
                 if (otherNode.id === draggedNode.id) continue;
-
                 const otherNodeDim = getNodeDimension(otherNode);
                 if (
                     cursorReleaseX >= otherNode.x && cursorReleaseX <= otherNode.x + otherNodeDim &&
@@ -350,44 +347,37 @@ export default function Home() {
                     break;
                 }
             }
-
             if (targetNodeUnderneath) {
                 setNewEdgeDataSourceNodeId(draggedNode.id);
                 setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
                 setIsCreateEdgeDialogOpen(true);
             }
         }
-      } else if (isLinkingModeActive && activeInteractionNodeId) { 
+      } else if (isLinkingModeActive && activeInteractionNodeId) {
         setShowSearchBar(true);
       } else if (activeInteractionNodeId && !isDraggingForReposition && !showSearchBar) {
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
-      
-      if (!showSearchBar && !isCreateEdgeDialogOpen) { 
+
+      if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen) {
          setActiveInteractionNodeId(null);
       }
       setInteractionStartPos(null);
       setDragOffset(null);
       setIsDraggingForReposition(false);
-      setIsLinkingModeActive(false); 
+      setIsLinkingModeActive(false);
       setLinkingSourceNodeId(null);
       setLinkingLinePreview(null);
     };
 
-    // Attach event listeners
-    const currentContainer = containerRef.current; // Capture ref for cleanup
-    
-    // Mouse events on window for broader drag detection
+    const currentContainer = containerRef.current;
     window.addEventListener('mousemove', handleInteractionMove);
     window.addEventListener('mouseup', handleInteractionEnd);
-    
-    // Touch events on container to ensure preventDefault works correctly for scrolling
     if (currentContainer) {
         currentContainer.addEventListener('touchmove', handleInteractionMove, { passive: false });
         currentContainer.addEventListener('touchend', handleInteractionEnd);
     }
-
 
     return () => {
       window.removeEventListener('mousemove', handleInteractionMove);
@@ -398,7 +388,123 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, edges]); // Added edges to dependency array
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, edges, getNodeDimension, setNodes]);
+
+
+  const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
+    if (currentNodes.length < 2) return currentNodes;
+
+    let newNodes = currentNodes.map(n => ({ ...n })); // Work with a copy
+
+    for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
+      let systemMoved = false;
+      for (let i = 0; i < newNodes.length; i++) {
+        for (let j = i + 1; j < newNodes.length; j++) {
+          const nodeA = newNodes[i];
+          const nodeB = newNodes[j];
+
+          const dimA = getNodeDimension(nodeA);
+          const dimB = getNodeDimension(nodeB);
+          const radiusA = dimA / 2;
+          const radiusB = dimB / 2;
+
+          const centerAx = nodeA.x + radiusA;
+          const centerAy = nodeA.y + radiusA;
+          const centerBx = nodeB.x + radiusB;
+          const centerBy = nodeB.y + radiusB;
+
+          const dx = centerBx - centerAx;
+          const dy = centerBy - centerAy;
+          const distanceSquared = dx * dx + dy * dy;
+
+          // Avoid square root until necessary for performance
+          const targetSeparation = radiusA + radiusB + MIN_SEPARATION;
+          const targetSeparationSquared = targetSeparation * targetSeparation;
+
+          if (distanceSquared < targetSeparationSquared && distanceSquared > 0) {
+            const distance = Math.sqrt(distanceSquared); // Now calculate sqrt
+            const overlap = targetSeparation - distance;
+
+            // Make force stronger for larger overlaps, but with REPULSION_STRENGTH as a coefficient
+            const forceMagnitude = overlap * REPULSION_STRENGTH;
+
+            const normDx = dx / distance;
+            const normDy = dy / distance;
+
+            let moveAx = 0, moveAy = 0, moveBx = 0, moveBy = 0;
+
+            if (nodeA.id === fixedNodeId) {
+              moveBx = normDx * forceMagnitude;
+              moveBy = normDy * forceMagnitude;
+            } else if (nodeB.id === fixedNodeId) {
+              moveAx = -normDx * forceMagnitude;
+              moveAy = -normDy * forceMagnitude;
+            } else {
+              moveAx = -normDx * forceMagnitude / 2;
+              moveAy = -normDy * forceMagnitude / 2;
+              moveBx = normDx * forceMagnitude / 2;
+              moveBy = normDy * forceMagnitude / 2;
+            }
+
+            if (nodeA.id !== fixedNodeId) {
+              const prevX = nodeA.x;
+              const prevY = nodeA.y;
+              nodeA.x += moveAx;
+              nodeA.y += moveAy;
+              nodeA.x = Math.max(0, Math.min(nodeA.x, CONTAINER_MAX_WIDTH_PX - dimA));
+              nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
+              if (nodeA.x !== prevX || nodeA.y !== prevY) systemMoved = true;
+            }
+
+            if (nodeB.id !== fixedNodeId) {
+              const prevX = nodeB.x;
+              const prevY = nodeB.y;
+              nodeB.x += moveBx;
+              nodeB.y += moveBy;
+              nodeB.x = Math.max(0, Math.min(nodeB.x, CONTAINER_MAX_WIDTH_PX - dimB));
+              nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
+              if (nodeB.x !== prevX || nodeB.y !== prevY) systemMoved = true;
+            }
+          }
+        }
+      }
+      if (!systemMoved && iter > 0) break; // If no nodes moved in this iteration, system is stable
+    }
+    return newNodes;
+  }, [getNodeDimension]);
+
+
+  // useEffect for applying repulsion
+  useEffect(() => {
+    if (nodes.length < 2) return;
+
+    // fixedNodeId is activeInteractionNodeId if a node is being dragged/interacted with
+    // otherwise, it's null, meaning all nodes can be repelled.
+    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
+
+    // Check if positions actually changed significantly to prevent unnecessary re-renders
+    let changed = false;
+    if (nodes.length === repulsedNodes.length) { // Basic check
+        for (let i = 0; i < nodes.length; i++) {
+            // Using a small epsilon for float comparisons might be better, but direct check for now
+            if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
+                changed = true;
+                break;
+            }
+        }
+    } else {
+        changed = true; // Length changed, definitely update
+    }
+
+
+    if (changed) {
+      // Defer state update slightly to avoid tight loops with interaction effects
+      const timeoutId = setTimeout(() => {
+        setNodes(repulsedNodes);
+      }, 0);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [nodes, activeInteractionNodeId, applyRepulsion]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -407,10 +513,10 @@ export default function Home() {
   return (
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
       <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">Node Weaver</h1>
-      
+
       <div
         ref={containerRef}
-        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none" // touch-none to prevent default scroll/zoom on touch devices within this container
+        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none"
         style={{ height: `${CONTAINER_HEIGHT_PX}px`, maxWidth: `${CONTAINER_MAX_WIDTH_PX}px` }}
       >
         <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
@@ -457,7 +563,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
-            zIndex: 1, 
+            zIndex: 1,
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
@@ -497,14 +603,14 @@ export default function Home() {
             <Input
               placeholder="Search nodes or type to connect..."
               className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
-              onFocus={() => { 
+              onFocus={() => {
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
               }}
             />
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null); 
+                setActiveInteractionNodeId(null);
               }}
               variant="ghost"
               size="sm"
@@ -519,7 +625,7 @@ export default function Home() {
 
       <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
           setIsCreateNodeDialogOpen(isOpen);
-          if (!isOpen) setActiveInteractionNodeId(null); 
+          if (!isOpen) setActiveInteractionNodeId(null);
       }}>
         <DialogTrigger asChild>
           <Button className="mt-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
@@ -610,10 +716,10 @@ export default function Home() {
 
       <Dialog open={isCreateEdgeDialogOpen} onOpenChange={(isOpen) => {
           setIsCreateEdgeDialogOpen(isOpen);
-          if (!isOpen) { 
-            setNewEdgeDataSourceNodeId(null); 
-            setNewEdgeDataTargetNodeId(null); 
-            setActiveInteractionNodeId(null); 
+          if (!isOpen) {
+            setNewEdgeDataSourceNodeId(null);
+            setNewEdgeDataTargetNodeId(null);
+            setActiveInteractionNodeId(null);
           }
       }}>
         <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
