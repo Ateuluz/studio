@@ -18,7 +18,10 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Plus, Link2, Trash2 } from "lucide-react";
+import { Plus, Link2, Trash2, Download } from "lucide-react";
+
+const NODES_KEY = 'nodeWeaverNodes';
+const EDGES_KEY = 'nodeWeaverEdges';
 
 interface Node {
   id: string;
@@ -56,7 +59,7 @@ const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50;
-const SVG_OFFSET = 5000; // Offset for the large SVG canvas
+const SVG_OFFSET = 5000;
 
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
@@ -183,6 +186,50 @@ export default function Home() {
   const [panXSliderLimits, setPanXSliderLimits] = useState({ min: -1000, max: 1000 });
   const [panYSliderLimits, setPanYSliderLimits] = useState({ min: -1000, max: 1000 });
 
+  const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
+    const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
+    return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
+  }, []);
+
+  // --- Data Persistence ---
+  const saveNodesToLocalStorage = useCallback((currentNodes: Node[]) => {
+    try {
+      localStorage.setItem(NODES_KEY, JSON.stringify(currentNodes));
+    } catch (error) {
+      console.error("Failed to save nodes:", error);
+    }
+  }, []);
+
+  const saveEdgesToLocalStorage = useCallback((currentEdges: Edge[]) => {
+    try {
+      localStorage.setItem(EDGES_KEY, JSON.stringify(currentEdges));
+    } catch (error) {
+      console.error("Failed to save edges:", error);
+    }
+  }, []);
+  
+  const loadDataFromLocalStorage = useCallback(() => {
+    try {
+      const storedNodes = localStorage.getItem(NODES_KEY);
+      if (storedNodes) {
+        setNodes(JSON.parse(storedNodes));
+      }
+      const storedEdges = localStorage.getItem(EDGES_KEY);
+      if (storedEdges) {
+        setEdges(JSON.parse(storedEdges));
+      }
+    } catch (error) {
+      console.error("Failed to load data from localStorage:", error);
+      setNodes([]); // Reset to empty if data is corrupted
+      setEdges([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDataFromLocalStorage();
+  }, [loadDataFromLocalStorage]);
+  // --- End Data Persistence ---
+
   useEffect(() => {
     if (containerRef.current) {
       setContainerWidth(containerRef.current.getBoundingClientRect().width);
@@ -196,11 +243,6 @@ export default function Home() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
-    const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
-    return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
-  }, []);
-
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
     if (!containerRef.current || scale === 0) return { x: 0, y: 0 };
     const rect = containerRef.current.getBoundingClientRect();
@@ -211,41 +253,59 @@ export default function Home() {
 
   useEffect(() => {
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
-
+  
     const nodesToConsider = activeInteractionNodeId
       ? nodes.filter(n => n.id !== activeInteractionNodeId)
       : nodes;
-
+  
     let contentMinXWorld = 0, contentMaxXWorld = 0, contentMinYWorld = 0, contentMaxYWorld = 0;
-
+  
     if (nodesToConsider.length > 0) {
       contentMinXWorld = Math.min(...nodesToConsider.map(n => n.x));
       contentMaxXWorld = Math.max(...nodesToConsider.map(n => n.x + getNodeDimension(n)));
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else {
-      contentMinXWorld = (-offsetX / scale) + (containerWidth / scale / 4);
-      contentMaxXWorld = (-offsetX / scale) + (containerWidth / scale * 3 / 4);
-      contentMinYWorld = (-offsetY / scale) + (CONTAINER_HEIGHT_PX / scale / 4);
-      contentMaxYWorld = (-offsetY / scale) + (CONTAINER_HEIGHT_PX / scale * 3 / 4);
+      // Default view when no nodes exist or are considered
+      const initialWorldViewCenterX = (-offsetX / scale) + (containerWidth / (2 * scale));
+      const initialWorldViewCenterY = (-offsetY / scale) + (CONTAINER_HEIGHT_PX / (2 * scale));
+      const defaultSpan = Math.max(containerWidth, CONTAINER_HEIGHT_PX) / (2 * scale) ; // Arbitrary span
+      contentMinXWorld = initialWorldViewCenterX - defaultSpan / 2;
+      contentMaxXWorld = initialWorldViewCenterX + defaultSpan / 2;
+      contentMinYWorld = initialWorldViewCenterY - defaultSpan / 2;
+      contentMaxYWorld = initialWorldViewCenterY + defaultSpan / 2;
     }
-
+  
     const paddingXWorld = (containerWidth / 2) / scale;
     const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / scale;
-
-    let targetOffsetX, targetOffsetY;
+  
     const contentWorldWidth = contentMaxXWorld - contentMinXWorld;
     const contentWorldHeight = contentMaxYWorld - contentMinYWorld;
-
-    const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
+  
+    // Calculate target offsets to center content if it's smaller than the viewport
+    let targetOffsetX, targetOffsetY;
+  
+    if (contentWorldWidth * scale <= containerWidth) {
+      targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
+    } else {
+      targetOffsetX = offsetX; // Keep current offset if content is wider than viewport
+    }
+  
+    if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
+      targetOffsetY = (CONTAINER_HEIGHT_PX / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
+    } else {
+      targetOffsetY = offsetY; // Keep current offset if content is taller than viewport
+    }
+  
+    // Define slider limits based on content extents and padding
     const minOffsetX = containerWidth - (contentMaxXWorld * scale) - paddingXWorld * scale;
-    const maxOffsetY = -(contentMinYWorld * scale) + paddingYWorld * scale;
+    const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
     const minOffsetY = CONTAINER_HEIGHT_PX - (contentMaxYWorld * scale) - paddingYWorld * scale;
-
+    const maxOffsetY = -(contentMinYWorld * scale) + paddingYWorld * scale;
+    
     let finalMinOffsetX, finalMaxOffsetX, finalMinOffsetY, finalMaxOffsetY;
 
     if (contentWorldWidth * scale <= containerWidth) {
-        targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
         finalMinOffsetX = targetOffsetX;
         finalMaxOffsetX = targetOffsetX;
     } else {
@@ -254,7 +314,6 @@ export default function Home() {
     }
 
     if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
-        targetOffsetY = (CONTAINER_HEIGHT_PX / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
         finalMinOffsetY = targetOffsetY;
         finalMaxOffsetY = targetOffsetY;
     } else {
@@ -264,11 +323,11 @@ export default function Home() {
 
     const newPanXLimits = { min: Math.min(finalMinOffsetX, finalMaxOffsetX), max: Math.max(finalMinOffsetX, finalMaxOffsetX) };
     const newPanYLimits = { min: Math.min(finalMinOffsetY, finalMaxOffsetY), max: Math.max(finalMinOffsetY, finalMaxOffsetY) };
-
+    
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-    // Re-add clamping logic here as per revert
+    // Clamp current offsetX and offsetY to the new limits
     const currentClampedOffsetX = Math.max(newPanXLimits.min, Math.min(newPanXLimits.max, offsetX));
     if (currentClampedOffsetX !== offsetX) {
         setOffsetX(currentClampedOffsetX);
@@ -279,7 +338,7 @@ export default function Home() {
         setOffsetY(currentClampedOffsetY);
     }
 
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]); // Added offsetX, offsetY back
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
 
 
   const createNode = () => {
@@ -333,8 +392,11 @@ export default function Home() {
         type: newNodeType,
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
+      
+      const updatedNodes = [...nodes, newNodeToAdd];
+      setNodes(updatedNodes);
+      saveNodesToLocalStorage(updatedNodes);
 
-      setNodes(prevNodes => [...prevNodes, newNodeToAdd]);
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
     }
@@ -353,11 +415,13 @@ export default function Home() {
   const saveNodeChanges = () => {
     if (editingNode && editNodeName) {
       const tagsArray = editNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      setNodes(nodes.map(n =>
+      const updatedNodes = nodes.map(n =>
         n.id === editingNode.id
         ? { ...n, name: editNodeName, description: editNodeDescription, tags: tagsArray, birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined }
         : n
-      ));
+      );
+      setNodes(updatedNodes);
+      saveNodesToLocalStorage(updatedNodes);
       setEditingNode(null);
       setIsEditNodeDialogOpen(false);
     }
@@ -379,7 +443,10 @@ export default function Home() {
         targetNodeId: newEdgeDataTargetNodeId,
         tags: parsedTags,
       };
-      setEdges([...edges, newEdgeToAdd]);
+      const updatedEdges = [...edges, newEdgeToAdd];
+      setEdges(updatedEdges);
+      saveEdgesToLocalStorage(updatedEdges);
+
       setIsCreateEdgeDialogOpen(false);
       setNewEdgeDataSourceNodeId(null);
       setNewEdgeDataTargetNodeId(null);
@@ -390,9 +457,12 @@ export default function Home() {
   const saveEdgeChanges = () => {
     if (editingEdge) {
       const updatedTags = parseTagsWithDates(editEdgeTagsInput);
-      setEdges(prevEdges => prevEdges.map(edge =>
+      const updatedEdges = edges.map(edge =>
         edge.id === editingEdge.id ? { ...edge, tags: updatedTags } : edge
-      ));
+      );
+      setEdges(updatedEdges);
+      saveEdgesToLocalStorage(updatedEdges);
+
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
     }
@@ -400,7 +470,10 @@ export default function Home() {
 
   const deleteEdge = () => {
     if (editingEdge) {
-      setEdges(prevEdges => prevEdges.filter(edge => edge.id !== editingEdge.id));
+      const updatedEdges = edges.filter(edge => edge.id !== editingEdge.id);
+      setEdges(updatedEdges);
+      saveEdgesToLocalStorage(updatedEdges);
+
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
     }
@@ -512,10 +585,10 @@ export default function Home() {
         }
       }
 
-      if (linkingLinePreview && linkingSourceNodeId) {
+      if (linkingLinePreview && linkingSourceNodeId) { // Finished a linking drag
         const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
         if(sourceNode){
-            if (targetNodeUnderneath) {
+            if (targetNodeUnderneath) { // Link to target node
                 const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
                 if (existingEdge) {
                     setEditingEdge(existingEdge);
@@ -527,20 +600,23 @@ export default function Home() {
                     setNewEdgeTagsInput("");
                     setIsCreateEdgeDialogOpen(true);
                 }
-            } else {
-                setNodes(prevNodes => prevNodes.map(n => {
+            } else { // Link to empty space: reposition source node
+                const updatedNodes = nodes.map(n => {
                     if (n.id === linkingSourceNodeId) {
                         let newX = worldMouseReleasePos.x - (dragOffset?.x || (getNodeDimension(n)/2));
                         let newY = worldMouseReleasePos.y - (dragOffset?.y || (getNodeDimension(n)/2));
                         return { ...n, x: newX, y: newY };
                     }
                     return n;
-                }));
+                });
+                setNodes(updatedNodes);
+                saveNodesToLocalStorage(updatedNodes);
             }
         }
-      } else if (isDraggingForReposition) {
+      } else if (isDraggingForReposition) { // Finished a repositioning drag
         const draggedNodeId = activeInteractionNodeId;
-        if (draggedNodeId && targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) {
+        let nodeWasSaved = false;
+        if (draggedNodeId && targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { // Dropped on another node
             const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
             if (existingEdge) {
                 setEditingEdge(existingEdge);
@@ -552,10 +628,23 @@ export default function Home() {
                 setNewEdgeTagsInput("");
                 setIsCreateEdgeDialogOpen(true);
             }
+        } else if (draggedNodeId) { // Dropped in empty space, save position
+            const draggedNode = nodes.find(n => n.id === draggedNodeId);
+            if (draggedNode) { // Check if node position actually changed from its last saved state
+                 // The position is already updated in state by handleInteractionMove
+                 // So we just need to trigger the save.
+                 // A more robust way would be to compare against original position before drag.
+                 saveNodesToLocalStorage(nodes); // Save all nodes as positions might have changed for multiple
+                 nodeWasSaved = true;
+            }
         }
-      } else if (isLinkingModeActive && activeInteractionNodeId) {
+        if (!nodeWasSaved && activeInteractionNodeId) { // If not saved by dropping on another node, save its final position
+            saveNodesToLocalStorage(nodes);
+        }
+
+      } else if (isLinkingModeActive && activeInteractionNodeId) { // Press-hold-release (no drag)
         setShowSearchBar(true);
-      } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) {
+      } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { // Simple click
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
@@ -588,7 +677,7 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, edges, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY, saveNodesToLocalStorage, saveEdgesToLocalStorage /* Added save functions */]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
@@ -604,9 +693,8 @@ export default function Home() {
           const nodeB = newNodes[j];
 
           if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
-              continue;
+              continue; // Do not exert or receive force if one is the fixed node
           }
-          if(nodeA.id === fixedNodeId || nodeB.id === fixedNodeId) continue; // No repulsion if one is the fixed node
 
           const dimA = getNodeDimension(nodeA);
           const dimB = getNodeDimension(nodeB);
@@ -635,6 +723,15 @@ export default function Home() {
             let moveAy = -normDy * forceMagnitude / 2;
             let moveBx = normDx * forceMagnitude / 2;
             let moveBy = normDy * forceMagnitude / 2;
+            
+            // If one of the nodes is the fixedNodeId (though this case is now prevented by the check above),
+            // it shouldn't move, so the other node takes the full force.
+            // This logic remains for clarity but the outer `if` fixedNodeId check handles it primarily.
+            if (nodeA.id === fixedNodeId) {
+              moveBx *= 2; moveBy *= 2; moveAx = 0; moveAy = 0;
+            } else if (nodeB.id === fixedNodeId) {
+              moveAx *= 2; moveAy *= 2; moveBx = 0; moveBy = 0;
+            }
 
             const prevXA = nodeA.x;
             const prevYA = nodeA.y;
@@ -656,7 +753,7 @@ export default function Home() {
   }, [getNodeDimension, containerWidth]);
 
   useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return;
+    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return; // Global repulsion only if no node is active
 
     const repulsedNodes = applyRepulsion(nodes, null);
     let changed = false;
@@ -670,13 +767,13 @@ export default function Home() {
     } else { changed = true; }
 
     if (changed) {
-      const timeoutId = setTimeout(() => setNodes(repulsedNodes), 50);
+      const timeoutId = setTimeout(() => setNodes(repulsedNodes), 50); // Do not save here, transient
       return () => clearTimeout(timeoutId);
     }
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
   useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return;
+    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; // Repulsion around fixed node
 
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
     let changed = false;
@@ -692,10 +789,10 @@ export default function Home() {
     if (changed) {
       const timeoutId = setTimeout(() => {
         setNodes(currentNodes => currentNodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn;
+            if (cn.id === activeInteractionNodeId) return cn; // Keep fixed node as is
             const rn = repulsedNodes.find(r => r.id === cn.id);
             return rn || cn;
-        }));
+        })); // Do not save here, transient
       }, 50);
       return () => clearTimeout(timeoutId);
     }
@@ -785,7 +882,6 @@ export default function Home() {
               height: `${SVG_OFFSET * 2}px`,
             }}
           >
-            {/* Grid Lines - Rendered First */}
             {isClient && gridData.verticalLines.map((lineX) => (
               <line
                 key={`v-${lineX}`}
@@ -794,7 +890,7 @@ export default function Home() {
                 x2={lineX + SVG_OFFSET}
                 y2={gridData.worldView.top + gridData.worldView.height + SVG_OFFSET}
                 stroke="hsl(var(--border))"
-                strokeWidth={0.5 / scale}
+                strokeWidth={0.5 / scale} // Keep stroke width visually consistent
                 opacity="0.5"
               />
             ))}
@@ -806,12 +902,11 @@ export default function Home() {
                 x2={gridData.worldView.left + gridData.worldView.width + SVG_OFFSET}
                 y2={lineY + SVG_OFFSET}
                 stroke="hsl(var(--border))"
-                strokeWidth={0.5 / scale}
+                strokeWidth={0.5 / scale} // Keep stroke width visually consistent
                 opacity="0.5"
               />
             ))}
 
-            {/* Edges */}
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
               const targetNode = nodes.find(n => n.id === edge.targetNodeId);
@@ -828,7 +923,7 @@ export default function Home() {
                   x2={targetNode.x + SVG_OFFSET + targetDim / 2}
                   y2={targetNode.y + SVG_OFFSET + targetDim / 2}
                   stroke="hsl(var(--ring))"
-                  strokeWidth={2 / scale}
+                  strokeWidth={2 / scale} // Keep stroke width visually consistent
                   opacity="0.6"
                 />
               );
@@ -840,7 +935,7 @@ export default function Home() {
                 x2={linkingLinePreview.x2 + SVG_OFFSET}
                 y2={linkingLinePreview.y2 + SVG_OFFSET}
                 stroke="hsl(var(--primary))"
-                strokeWidth={2 / scale}
+                strokeWidth={2 / scale} // Keep stroke width visually consistent
                 strokeDasharray={`${5/scale},${5/scale}`}
               />
             )}
@@ -857,7 +952,7 @@ export default function Home() {
               backgroundColor: "hsl(var(--node-color))",
               color: "hsl(var(--card-foreground))",
               zIndex: activeInteractionNodeId === node.id ? 20 : 10,
-              borderRadius: '9999px',
+              borderRadius: '9999px', // Makes it round
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
@@ -865,27 +960,30 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)',
-              transition: 'box-shadow 0.2s ease, transform 0.2s ease',
+              transition: 'box-shadow 0.2s ease, transform 0.2s ease', // Smooth transitions
               userSelect: 'none',
-              border: '1px solid hsl(var(--border))'
+              border: '1px solid hsl(var(--border))' // Default border
             };
-            if (node.type === 'entity') {
+            if (node.type === 'entity') { // Brighter border for entity
               nodeStyles.borderColor = 'hsl(var(--ring))';
               nodeStyles.borderWidth = '2px';
             }
 
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
-                nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))';
+                nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; // Enhanced shadow for active node
                 nodeStyles.transform = 'scale(1.05)';
             }
+            
+            // Dynamic font sizing based on scale, with a minimum
+            const minFontSize = 6; // Minimum font size in pixels (on screen)
+            const baseNameFontSize = 16; // Desired font size at scale = 1 (world units)
+            const baseTagFontSize = 10;  // Desired font size at scale = 1 (world units)
 
-            const minFontSize = 6;
-            const baseNameFontSize = 16;
-            const baseTagFontSize = 10;
-
-            const dynamicNameFontSizeScreen = Math.max(minFontSize, baseNameFontSize * Math.min(scale, 1));
+            // Calculate screen font size, ensuring it doesn't go below minFontSize
+            const dynamicNameFontSizeScreen = Math.max(minFontSize, baseNameFontSize * Math.min(scale, 1)); // Don't make font huge when zooming way in
             const dynamicTagFontSizeScreen = Math.max(minFontSize, baseTagFontSize * Math.min(scale, 1));
 
+            // Convert back to world units for styling the element, as element itself is scaled
             const finalNameFontSize = dynamicNameFontSizeScreen / scale;
             const finalTagFontSize = dynamicTagFontSizeScreen / scale;
 
@@ -901,15 +999,15 @@ export default function Home() {
               >
                 <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${finalNameFontSize}px`, lineHeight: '1.2' }}>{node.name}</h2>
                 {node.tags.length > 0 && (
-                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]">
-                    {node.tags.slice(0, 2).map(tag => (
+                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]"> {/* Limit height of tags area */}
+                    {node.tags.slice(0, 2).map(tag => ( // Display max 2 tags
                       <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
-                {node.tags.length > 2 && (
+                {node.tags.length > 2 && ( // Show "+X more" if more than 2 tags
                   <span className="text-xs mt-0.5 opacity-70" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>+{node.tags.length - 2} more</span>
                 )}
               </div>
@@ -924,7 +1022,7 @@ export default function Home() {
             <Input
               placeholder="Search nodes or type to connect..."
               className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
-              onFocus={() => {
+              onFocus={() => { // Prevent interactions while search bar is focused
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
                 if(activeInteractionNodeId) setActiveInteractionNodeId(null);
               }}
@@ -932,67 +1030,75 @@ export default function Home() {
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null);
+                setActiveInteractionNodeId(null); // Ensure no node is active after closing search
               }}
               variant="ghost"
               size="sm"
               className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground hover:text-foreground h-8 w-8 p-0"
               aria-label="Close search bar"
             >
-              <Plus className="h-5 w-5 rotate-45" />
+              <Plus className="h-5 w-5 rotate-45" /> {/* X icon */}
             </Button>
           </div>
         </div>
       )}
-
-      <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
-          setIsCreateNodeDialogOpen(isOpen);
-          if (!isOpen) setActiveInteractionNodeId(null);
-      }}>
-        <DialogTrigger asChild>
-          <Button className="mt-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
-            <Plus className="mr-2 h-5 w-5" />
-            Create New Node
-          </Button>
-        </DialogTrigger>
-        <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">Add New Node</DialogTitle>
-            <DialogDescription>Define attributes for the new node. Click create when you're done.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-6 py-6">
-            <div className="grid gap-3">
-              <Label htmlFor="create-node-name" className="text-md">Name</Label>
-              <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
-            </div>
-            <div className="grid gap-3">
-                <Label className="text-md">Type</Label>
-                <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
-                    <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
-                    <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
-                </RadioGroup>
-            </div>
-            {newNodeType === 'entity' && (
+      
+      <div className="mt-8 flex gap-4">
+        <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
+            setIsCreateNodeDialogOpen(isOpen);
+            if (!isOpen) setActiveInteractionNodeId(null); // Reset active node if dialog is closed
+        }}>
+          <DialogTrigger asChild>
+            <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
+              <Plus className="mr-2 h-5 w-5" />
+              Create New Node
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
+            <DialogHeader>
+              <DialogTitle className="text-2xl">Add New Node</DialogTitle>
+              <DialogDescription>Define attributes for the new node. Click create when you're done.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-6 py-6">
               <div className="grid gap-3">
-                <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
-                <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
+                <Label htmlFor="create-node-name" className="text-md">Name</Label>
+                <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
               </div>
-            )}
-            <div className="grid gap-3">
-              <Label htmlFor="create-node-description" className="text-md">Description</Label>
-              <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
+              <div className="grid gap-3">
+                  <Label className="text-md">Type</Label>
+                  <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
+                      <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
+                      <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
+                  </RadioGroup>
+              </div>
+              {newNodeType === 'entity' && (
+                <div className="grid gap-3">
+                  <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
+                  <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
+                </div>
+              )}
+              <div className="grid gap-3">
+                <Label htmlFor="create-node-description" className="text-md">Description</Label>
+                <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
+              </div>
+              <div className="grid gap-3">
+                <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
+                <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
+              </div>
             </div>
-            <div className="grid gap-3">
-              <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
-              <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
+              <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Button onClick={loadDataFromLocalStorage} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
+            <Download className="mr-2 h-5 w-5" />
+            Load Data
+        </Button>
+      </div>
+
 
       {editingNode && (
         <Dialog open={isEditNodeDialogOpen} onOpenChange={(isOpen) => {
@@ -1011,6 +1117,7 @@ export default function Home() {
               </div>
               <div className="grid gap-3">
                 <Label className="text-md">Type</Label>
+                {/* Display type as non-editable text */}
                 <p className="text-md p-3 bg-muted/50 rounded-md border border-input capitalize select-none">{editingNode?.type}</p>
               </div>
               {editingNode?.type === 'entity' && (
@@ -1097,7 +1204,7 @@ export default function Home() {
                 <p className="text-xs text-muted-foreground">Separate tags with commas. Dates (YYYY-MM-DD) are optional per tag.</p>
               </div>
             </div>
-            <DialogFooter className="flex justify-between">
+            <DialogFooter className="flex justify-between"> {/* Align delete button to left, others to right */}
               <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto">
                 <Trash2 className="mr-2 h-5 w-5" /> Delete Edge
               </Button>
@@ -1116,5 +1223,3 @@ export default function Home() {
     </main>
   );
 }
-
-    
