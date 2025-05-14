@@ -16,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Plus, Link2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea"; // Added Textarea
+import { Plus, Link2, Trash2 } from "lucide-react"; // Added Trash2
 
 interface Node {
   id: string;
@@ -29,12 +30,16 @@ interface Node {
   birthday?: string;
 }
 
+interface EdgeTag {
+  name: string;
+  date?: string;
+}
+
 interface Edge {
   id: string;
   sourceNodeId: string;
   targetNodeId: string;
-  tags: string[];
-  creationDate: string;
+  tags: EdgeTag[];
 }
 
 const CATEGORY_NODE_DIMENSION = 160;
@@ -51,13 +56,40 @@ const REPULSION_STRENGTH = 0.5;
 const MIN_SEPARATION = 15;
 const REPULSION_ITERATIONS = 10;
 
+
+function parseTagsWithDates(tagsInput: string): EdgeTag[] {
+  if (!tagsInput.trim()) return [];
+  const tagEntries = tagsInput.split(',').map(entry => entry.trim());
+  const regex = /^(.*?)(?:\s*\((....-..-..)\))?$/;
+  return tagEntries.map(entry => {
+    const match = entry.match(regex);
+    if (match) {
+      const name = match[1].trim();
+      const date = match[2];
+      return { name, date: date || undefined };
+    }
+    // Fallback for simple tags or if regex fails for an entry
+    return { name: entry.trim() };
+  }).filter(tag => tag.name);
+}
+
+function formatTagsWithDates(tags: EdgeTag[]): string {
+  return tags.map(tag => {
+    let entry = tag.name;
+    if (tag.date) {
+      entry += ` (${tag.date})`;
+    }
+    return entry;
+  }).join(', ');
+}
+
+
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(768); // Default, will be updated
+  const [containerWidth, setContainerWidth] = useState(768);
 
-  // Create Node Dialog
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
   const [newNodeDescription, setNewNodeDescription] = useState("");
@@ -65,7 +97,6 @@ export default function Home() {
   const [newNodeType, setNewNodeType] = useState<'category' | 'entity'>('category');
   const [newNodeBirthday, setNewNodeBirthday] = useState("");
 
-  // Edit Node Dialog
   const [isEditNodeDialogOpen, setIsEditNodeDialogOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<Node | null>(null);
   const [editNodeName, setEditNodeName] = useState("");
@@ -73,15 +104,16 @@ export default function Home() {
   const [editNodeTags, setEditNodeTags] = useState("");
   const [editNodeBirthday, setEditNodeBirthday] = useState("");
 
-  // Create Edge Dialog
   const [isCreateEdgeDialogOpen, setIsCreateEdgeDialogOpen] = useState(false);
   const [newEdgeDataSourceNodeId, setNewEdgeDataSourceNodeId] = useState<string | null>(null);
   const [newEdgeDataTargetNodeId, setNewEdgeDataTargetNodeId] = useState<string | null>(null);
-  const [newEdgeTags, setNewEdgeTags] = useState("");
-  const [newEdgeDate, setNewEdgeDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [newEdgeTagsInput, setNewEdgeTagsInput] = useState("");
+
+  const [isEditEdgeDialogOpen, setIsEditEdgeDialogOpen] = useState(false);
+  const [editingEdge, setEditingEdge] = useState<Edge | null>(null);
+  const [editEdgeTagsInput, setEditEdgeTagsInput] = useState("");
 
 
-  // Interaction States
   const [activeInteractionNodeId, setActiveInteractionNodeId] = useState<string | null>(null);
   const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
   const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null);
@@ -114,7 +146,7 @@ export default function Home() {
   }, []);
 
   const createNode = () => {
-    if (newNodeName && containerWidth > 0) { // Ensure containerWidth is set
+    if (newNodeName && containerWidth > 0) {
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
       let newNodeX = 0;
       let newNodeY = 0;
@@ -169,7 +201,7 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null); // Clear active interaction for dialog
+    setActiveInteractionNodeId(null);
   }, []);
 
   const saveNodeChanges = () => {
@@ -185,24 +217,49 @@ export default function Home() {
     }
   };
 
+  const findExistingEdge = useCallback((nodeId1: string, nodeId2: string): Edge | undefined => {
+    return edges.find(edge =>
+      (edge.sourceNodeId === nodeId1 && edge.targetNodeId === nodeId2) ||
+      (edge.sourceNodeId === nodeId2 && edge.targetNodeId === nodeId1)
+    );
+  }, [edges]);
+
   const createEdge = () => {
-    if (newEdgeDataSourceNodeId && newEdgeDataTargetNodeId && newEdgeDate) {
-      const tagsArray = newEdgeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
+    if (newEdgeDataSourceNodeId && newEdgeDataTargetNodeId) {
+      const parsedTags = parseTagsWithDates(newEdgeTagsInput);
       const newEdgeToAdd: Edge = {
         id: crypto.randomUUID(),
         sourceNodeId: newEdgeDataSourceNodeId,
         targetNodeId: newEdgeDataTargetNodeId,
-        tags: tagsArray,
-        creationDate: newEdgeDate,
+        tags: parsedTags,
       };
       setEdges([...edges, newEdgeToAdd]);
       setIsCreateEdgeDialogOpen(false);
       setNewEdgeDataSourceNodeId(null);
       setNewEdgeDataTargetNodeId(null);
-      setNewEdgeTags("");
-      setNewEdgeDate(new Date().toISOString().split('T')[0]);
+      setNewEdgeTagsInput("");
     }
   };
+
+  const saveEdgeChanges = () => {
+    if (editingEdge) {
+      const updatedTags = parseTagsWithDates(editEdgeTagsInput);
+      setEdges(prevEdges => prevEdges.map(edge =>
+        edge.id === editingEdge.id ? { ...edge, tags: updatedTags } : edge
+      ));
+      setEditingEdge(null);
+      setIsEditEdgeDialogOpen(false);
+    }
+  };
+
+  const deleteEdge = () => {
+    if (editingEdge) {
+      setEdges(prevEdges => prevEdges.filter(edge => edge.id !== editingEdge.id));
+      setEditingEdge(null);
+      setIsEditEdgeDialogOpen(false);
+    }
+  };
+
 
   const handleNodeInteractionStart = (
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
@@ -232,11 +289,9 @@ export default function Home() {
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
 
     const timer = setTimeout(() => {
-      // Check if still the active node and no significant drag has occurred
       if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) {
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
-        // No drag yet, so linking preview is not set here
       }
       setPressHoldTimer(null);
     }, PRESS_HOLD_THRESHOLD);
@@ -265,8 +320,7 @@ export default function Home() {
         }
 
         if (isLinkingModeActive && linkingSourceNodeId) {
-          // Dragging for linking (after press-hold was completed)
-          setIsDraggingForReposition(false); // Ensure not misinterpreted as repositioning
+          setIsDraggingForReposition(false);
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if (sourceNode) {
             const sourceDim = getNodeDimension(sourceNode);
@@ -278,7 +332,6 @@ export default function Home() {
             });
           }
         } else {
-          // Dragging for repositioning (no prior press-hold completion or press-hold was cancelled by drag)
           setIsDraggingForReposition(true);
           setNodes(prevNodes => prevNodes.map(n => {
             if (n.id === activeInteractionNodeId) {
@@ -304,34 +357,41 @@ export default function Home() {
 
       const point = 'changedTouches' in event ? event.changedTouches[0] : event;
       if (!point || !containerRef.current) {
-         if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen) setActiveInteractionNodeId(null);
+         if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
         setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
         setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
         return;
       }
       const containerRect = containerRef.current.getBoundingClientRect();
+      const cursorReleaseX = point.clientX - containerRect.left;
+      const cursorReleaseY = point.clientY - containerRect.top;
+
+      let targetNodeUnderneath: Node | null = null;
+      for (const node of nodes) {
+        if (node.id === activeInteractionNodeId) continue; // Cannot drop on itself for edge creation
+        const nodeDim = getNodeDimension(node);
+        if (cursorReleaseX >= node.x && cursorReleaseX <= node.x + nodeDim &&
+            cursorReleaseY >= node.y && cursorReleaseY <= node.y + nodeDim) {
+            targetNodeUnderneath = node;
+            break;
+        }
+      }
 
       if (linkingLinePreview && linkingSourceNodeId) { // Finished a press-hold-drag for linking
         const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
         if(sourceNode){
-            let targetNode: Node | null = null;
-            const cursorX = point.clientX - containerRect.left;
-            const cursorY = point.clientY - containerRect.top;
-
-            for (const node of nodes) {
-                if (node.id === linkingSourceNodeId) continue;
-                const nodeDim = getNodeDimension(node);
-                if (cursorX >= node.x && cursorX <= node.x + nodeDim &&
-                    cursorY >= node.y && cursorY <= node.y + nodeDim) {
-                    targetNode = node;
-                    break;
+            if (targetNodeUnderneath) {
+                const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
+                if (existingEdge) {
+                    setEditingEdge(existingEdge);
+                    setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
+                    setIsEditEdgeDialogOpen(true);
+                } else {
+                    setNewEdgeDataSourceNodeId(linkingSourceNodeId);
+                    setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
+                    setNewEdgeTagsInput("");
+                    setIsCreateEdgeDialogOpen(true);
                 }
-            }
-
-            if (targetNode) {
-                setNewEdgeDataSourceNodeId(linkingSourceNodeId);
-                setNewEdgeDataTargetNodeId(targetNode.id);
-                setIsCreateEdgeDialogOpen(true);
             } else { // Released in empty space after link attempt: move node
                 const nodeDim = getNodeDimension(sourceNode);
                 let newX = (point.clientX - containerRect.left) - (dragOffset?.x || 0) ;
@@ -344,31 +404,20 @@ export default function Home() {
         }
       } else if (isDraggingForReposition) { // Finished a simple drag for repositioning
         const draggedNodeId = activeInteractionNodeId;
-        const draggedNode = nodes.find(n => n.id === draggedNodeId);
-
-        if (draggedNode) { // Check if dropped on another node for edge creation
-            const cursorReleaseX = point.clientX - containerRect.left;
-            const cursorReleaseY = point.clientY - containerRect.top;
-
-            let targetNodeUnderneath: Node | null = null;
-            for (const otherNode of nodes) {
-                if (otherNode.id === draggedNode.id) continue;
-                const otherNodeDim = getNodeDimension(otherNode);
-                if (
-                    cursorReleaseX >= otherNode.x && cursorReleaseX <= otherNode.x + otherNodeDim &&
-                    cursorReleaseY >= otherNode.y && cursorReleaseY <= otherNode.y + otherNodeDim
-                ) {
-                    targetNodeUnderneath = otherNode;
-                    break;
-                }
-            }
-            if (targetNodeUnderneath) {
-                setNewEdgeDataSourceNodeId(draggedNode.id);
+        if (draggedNodeId && targetNodeUnderneath) { // Dropped on another node
+            const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
+            if (existingEdge) {
+                setEditingEdge(existingEdge);
+                setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
+                setIsEditEdgeDialogOpen(true);
+            } else {
+                setNewEdgeDataSourceNodeId(draggedNodeId);
                 setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
+                setNewEdgeTagsInput("");
                 setIsCreateEdgeDialogOpen(true);
             }
-            // Node position is already updated during drag by handleInteractionMove
         }
+        // Node position is already updated during drag by handleInteractionMove
       } else if (isLinkingModeActive && activeInteractionNodeId) { // Press-hold completed, no drag -> show search
         setShowSearchBar(true);
       } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { // Simple click/tap
@@ -376,7 +425,7 @@ export default function Home() {
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
 
-      if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen) {
+      if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) {
          setActiveInteractionNodeId(null);
       }
       setInteractionStartPos(null);
@@ -404,7 +453,7 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, edges, getNodeDimension, containerWidth]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, edges, getNodeDimension, containerWidth, findExistingEdge]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
@@ -418,6 +467,11 @@ export default function Home() {
         for (let j = i + 1; j < newNodes.length; j++) {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
+
+          // If either node is the fixedNodeId, skip repulsion calculation between this pair
+          if (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId) {
+              continue;
+          }
 
           const dimA = getNodeDimension(nodeA);
           const dimB = getNodeDimension(nodeB);
@@ -442,52 +496,40 @@ export default function Home() {
             const normDx = dx / distance;
             const normDy = dy / distance;
 
-            let moveAx = 0, moveAy = 0, moveBx = 0, moveBy = 0;
+            let moveAx = -normDx * forceMagnitude / 2;
+            let moveAy = -normDy * forceMagnitude / 2;
+            let moveBx = normDx * forceMagnitude / 2;
+            let moveBy = normDy * forceMagnitude / 2;
 
-            // Only calculate and apply repulsion if NEITHER node is the fixedNodeId.
-            // The fixedNodeId itself is immune to movement from repulsion (handled by the update block),
-            // and it does not exert force on others.
-            if (nodeA.id !== fixedNodeId && nodeB.id !== fixedNodeId) {
-                moveAx = -normDx * forceMagnitude / 2;
-                moveAy = -normDy * forceMagnitude / 2;
-                moveBx = normDx * forceMagnitude / 2;
-                moveBy = normDy * forceMagnitude / 2;
-            }
-            // If one of the nodes is fixed, moveAx, moveAy, moveBx, moveBy remain 0 for this pair.
+            const prevXA = nodeA.x;
+            const prevYA = nodeA.y;
+            nodeA.x += moveAx;
+            nodeA.y += moveAy;
+            nodeA.x = Math.max(0, Math.min(nodeA.x, containerWidth - dimA));
+            nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
+            if (Math.abs(nodeA.x - prevXA) > 0.01 || Math.abs(nodeA.y - prevYA) > 0.01) systemMoved = true;
 
-            // Apply calculated movements only if the node itself is not fixed.
-            if (nodeA.id !== fixedNodeId && (moveAx !== 0 || moveAy !== 0)) {
-                const prevXA = nodeA.x;
-                const prevYA = nodeA.y;
-                nodeA.x += moveAx;
-                nodeA.y += moveAy;
-                nodeA.x = Math.max(0, Math.min(nodeA.x, containerWidth - dimA));
-                nodeA.y = Math.max(0, Math.min(nodeA.y, CONTAINER_HEIGHT_PX - dimA));
-                if (Math.abs(nodeA.x - prevXA) > 0.01 || Math.abs(nodeA.y - prevYA) > 0.01) systemMoved = true;
-            }
 
-            if (nodeB.id !== fixedNodeId && (moveBx !== 0 || moveBy !== 0)) {
-                const prevXB = nodeB.x;
-                const prevYB = nodeB.y;
-                nodeB.x += moveBx;
-                nodeB.y += moveBy;
-                nodeB.x = Math.max(0, Math.min(nodeB.x, containerWidth - dimB));
-                nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
-                 if (Math.abs(nodeB.x - prevXB) > 0.01 || Math.abs(nodeB.y - prevYB) > 0.01) systemMoved = true;
-            }
+            const prevXB = nodeB.x;
+            const prevYB = nodeB.y;
+            nodeB.x += moveBx;
+            nodeB.y += moveBy;
+            nodeB.x = Math.max(0, Math.min(nodeB.x, containerWidth - dimB));
+            nodeB.y = Math.max(0, Math.min(nodeB.y, CONTAINER_HEIGHT_PX - dimB));
+            if (Math.abs(nodeB.x - prevXB) > 0.01 || Math.abs(nodeB.y - prevYB) > 0.01) systemMoved = true;
           }
         }
       }
-      if (!systemMoved && iter > 0) break; // Optimization: if system hasn't moved, it's stable
+      if (!systemMoved && iter > 0) break;
     }
     return newNodes;
-  }, [getNodeDimension, containerWidth]); // Removed setNodes from dependencies
+  }, [getNodeDimension, containerWidth]);
 
 
   useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return; // Don't run repulsion if a node is active or initial conditions not met
+    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return;
 
-    const repulsedNodes = applyRepulsion(nodes, null); // Pass null when no node is actively interacted with for global repulsion
+    const repulsedNodes = applyRepulsion(nodes, null);
 
     let changed = false;
     if (nodes.length === repulsedNodes.length) {
@@ -498,60 +540,39 @@ export default function Home() {
             }
         }
     } else {
-        changed = true; // Should not happen if lengths are same
+        changed = true;
     }
 
     if (changed) {
       const timeoutId = setTimeout(() => {
         setNodes(repulsedNodes);
-      }, 0); // Defer state update slightly
+      }, 0);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); // Removed setNodes from here too
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
-  // Separate effect for repulsion when a node IS active (being dragged/linked)
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return;
 
-    // Apply repulsion, but the activeInteractionNodeId is fixed and does not exert force
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId);
 
     let changed = false;
-    const currentActiveNode = nodes.find(n => n.id === activeInteractionNodeId);
-    const repulsedActiveNode = repulsedNodes.find(n => n.id === activeInteractionNodeId);
-
-    // Check if any non-active node moved, or if active node's recorded position (if it were allowed to move by this effect) changed
     for (let i = 0; i < nodes.length; i++) {
         if (nodes[i].id === activeInteractionNodeId) {
-            // For the active node, its position is controlled by drag, not repulsion here.
-            // But if applyRepulsion somehow changed its data (it shouldn't if fixedNodeId logic is correct), reflect that.
-            if (repulsedActiveNode && currentActiveNode && (Math.abs(currentActiveNode.x - repulsedActiveNode.x) > 0.1 || Math.abs(currentActiveNode.y - repulsedActiveNode.y) > 0.1)){
-                 // This case should ideally not be hit if fixedNodeId logic in applyRepulsion is perfect for not moving the fixed node.
-            }
-        } else {
-            if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
-                changed = true;
-                break;
-            }
+            continue;
+        }
+        if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
+            changed = true;
+            break;
         }
     }
-     if (!changed && currentActiveNode && repulsedActiveNode) { // Check if only the active node's reference changed but not others
-        if (currentActiveNode.x !== repulsedActiveNode.x || currentActiveNode.y !== repulsedActiveNode.y) {
-            // This indicates the active node's position *in the source array for repulsion* was changed by drag,
-            // and applyRepulsion correctly kept it fixed, but we still need to trigger setNodes if other nodes moved *relative to it*.
-            // The previous loop should catch if other nodes moved. This is more of a consistency check.
-        }
-    }
-
 
     if (changed) {
       const timeoutId = setTimeout(() => {
-        // We only update nodes that are NOT the activeInteractionNodeId from this effect,
-        // as the activeInteractionNodeId's position is managed by drag handlers.
         setNodes(currentNodes => currentNodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn; // Keep active node's position from drag
+            if (cn.id === activeInteractionNodeId) return cn;
             const rn = repulsedNodes.find(r => r.id === cn.id);
-            return rn || cn; // Use repulsed position for non-active nodes
+            return rn || cn;
         }));
       }, 0);
       return () => clearTimeout(timeoutId);
@@ -615,7 +636,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
-            zIndex: activeInteractionNodeId === node.id ? 2 : 1, // Bring active node to front
+            zIndex: activeInteractionNodeId === node.id ? 2 : 1,
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
@@ -784,11 +805,14 @@ export default function Home() {
           <div className="grid gap-6 py-6">
             <div className="grid gap-3">
               <Label htmlFor="create-edge-tags" className="text-md">Tags</Label>
-              <Input id="create-edge-tags" placeholder="tag1, tag2 (optional)" value={newEdgeTags} onChange={(e) => setNewEdgeTags(e.target.value)} className="text-md p-3" />
-            </div>
-            <div className="grid gap-3">
-              <Label htmlFor="create-edge-date" className="text-md">Creation Date</Label>
-              <Input id="create-edge-date" type="date" value={newEdgeDate} onChange={(e) => setNewEdgeDate(e.target.value)} className="text-md p-3" />
+              <Textarea
+                id="create-edge-tags"
+                placeholder="tag1 (YYYY-MM-DD), tag2, tag3 (YYYY-MM-DD)"
+                value={newEdgeTagsInput}
+                onChange={(e) => setNewEdgeTagsInput(e.target.value)}
+                className="text-md p-3 min-h-[80px]"
+              />
+              <p className="text-xs text-muted-foreground">Separate tags with commas. Dates (YYYY-MM-DD) are optional per tag.</p>
             </div>
           </div>
           <DialogFooter>
@@ -797,6 +821,49 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {editingEdge && (
+        <Dialog open={isEditEdgeDialogOpen} onOpenChange={(isOpen) => {
+            setIsEditEdgeDialogOpen(isOpen);
+            if (!isOpen) { setEditingEdge(null); setActiveInteractionNodeId(null); }
+        }}>
+          <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
+            <DialogHeader>
+              <DialogTitle className="text-2xl">Edit Edge</DialogTitle>
+              <DialogDescription>
+                Modifying connection between '{nodes.find(n => n.id === editingEdge.sourceNodeId)?.name}'
+                and '{nodes.find(n => n.id === editingEdge.targetNodeId)?.name}'.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-6 py-6">
+              <div className="grid gap-3">
+                <Label htmlFor="edit-edge-tags" className="text-md">Tags</Label>
+                <Textarea
+                  id="edit-edge-tags"
+                  placeholder="tag1 (YYYY-MM-DD), tag2, tag3 (YYYY-MM-DD)"
+                  value={editEdgeTagsInput}
+                  onChange={(e) => setEditEdgeTagsInput(e.target.value)}
+                  className="text-md p-3 min-h-[80px]"
+                />
+                <p className="text-xs text-muted-foreground">Separate tags with commas. Dates (YYYY-MM-DD) are optional per tag.</p>
+              </div>
+            </div>
+            <DialogFooter className="flex justify-between">
+              <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto">
+                <Trash2 className="mr-2 h-5 w-5" /> Delete Edge
+              </Button>
+              <div>
+                <DialogClose asChild>
+                  <Button variant="outline" className="text-md px-5 py-2.5 mr-2">Cancel</Button>
+                </DialogClose>
+                <Button type="submit" onClick={saveEdgeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">
+                  Save Changes
+                </Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
     </main>
   );
