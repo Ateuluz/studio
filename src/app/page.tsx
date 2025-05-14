@@ -497,6 +497,27 @@ export default function Home() {
     }
   };
 
+  const deleteNode = () => {
+    if (!editingNode) return;
+
+    const nodeIdToDelete = editingNode.id;
+
+    // Remove the node
+    const updatedNodes = nodes.filter(node => node.id !== nodeIdToDelete);
+    setNodes(updatedNodes);
+    saveNodesToLocalStorage(updatedNodes);
+
+    // Remove connected edges
+    const updatedEdges = edges.filter(edge => edge.sourceNodeId !== nodeIdToDelete && edge.targetNodeId !== nodeIdToDelete);
+    setEdges(updatedEdges);
+    saveEdgesToLocalStorage(updatedEdges);
+    
+    setEditingNode(null);
+    setIsEditNodeDialogOpen(false);
+    setActiveInteractionNodeId(null); 
+  };
+
+
   const findExistingEdge = useCallback((nodeId1: string, nodeId2: string): Edge | undefined => {
     return edges.find(edge =>
       (edge.sourceNodeId === nodeId1 && edge.targetNodeId === nodeId2) ||
@@ -775,12 +796,7 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
-          // If either node is the fixedNodeId, skip repulsion FROM it or TO it by others.
-          // But the fixed node should still repel others IF fixedNodeId is null (global repulsion).
-          // If fixedNodeId is set, nodeA or nodeB being fixedNodeId means they don't get moved by others.
-          // AND they don't push others.
            if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
-              // If a node is fixed, it neither pushes nor is pushed.
               continue; 
           }
 
@@ -800,23 +816,19 @@ export default function Home() {
           const targetSeparation = radiusA + radiusB + MIN_SEPARATION;
           const targetSeparationSquared = targetSeparation * targetSeparation;
 
-          if (distanceSquared < targetSeparationSquared && distanceSquared > 0) { // Nodes are overlapping
+          if (distanceSquared < targetSeparationSquared && distanceSquared > 0) { 
             const distance = Math.sqrt(distanceSquared);
             const overlap = targetSeparation - distance;
-            const forceMagnitude = overlap * REPULSION_STRENGTH; // How much to push by
+            const forceMagnitude = overlap * REPULSION_STRENGTH; 
             
-            // Normalized direction vector
             const normDx = dx / distance;
             const normDy = dy / distance;
             
-            // Apply force to move nodes apart
-            // Each node moves half the force magnitude unless one is fixed
             let moveAx = -normDx * forceMagnitude / 2;
             let moveAy = -normDy * forceMagnitude / 2;
             let moveBx = normDx * forceMagnitude / 2;
             let moveBy = normDy * forceMagnitude / 2;
             
-            // Update positions (if not fixed)
             const prevXA = nodeA.x;
             const prevYA = nodeA.y;
             nodeA.x += moveAx;
@@ -829,49 +841,42 @@ export default function Home() {
             nodeB.x += moveBx;
             nodeB.y += moveBy;
             if (Math.abs(nodeB.x - prevXB) > 0.01 || Math.abs(nodeB.y - prevYB) > 0.01) systemMoved = true;
-
-            // No explicit boundary checks here anymore, pan limits handle visibility.
           }
         }
       }
-      if (!systemMoved && iter > 0) break; // Optimization: if system hasn't moved, further iterations won't help
+      if (!systemMoved && iter > 0) break; 
     }
     return newNodes;
-  }, [getNodeDimension, containerWidth]); // containerWidth is used in the original check, but not actively for boundary here
+  }, [getNodeDimension, containerWidth]); 
 
-  // Repulsion effect when no node is actively being interacted with (global adjustment)
   useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return; // Only run if no node is active
+    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return; 
 
-    const repulsedNodes = applyRepulsion(nodes, null); // No fixed node
+    const repulsedNodes = applyRepulsion(nodes, null); 
     let changed = false;
-    // Check if positions actually changed to avoid unnecessary re-renders
-    if (nodes.length === repulsedNodes.length) { // Basic check
+    if (nodes.length === repulsedNodes.length) { 
         for (let i = 0; i < nodes.length; i++) {
-            // Compare with a small tolerance
             if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
                 changed = true;
                 break;
             }
         }
-    } else { changed = true; } // If length changed (should not happen here), consider it changed
+    } else { changed = true; } 
 
     if (changed) {
-      const timeoutId = setTimeout(() => setNodes(repulsedNodes), 50); // Slight delay to batch updates
+      const timeoutId = setTimeout(() => setNodes(repulsedNodes), 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); // Rerun if nodes, activeInteractionNodeId, etc., change
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); 
 
-  // Repulsion effect when a node IS actively being interacted with (adjusts OTHERS around the active one)
   useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; // Only run if a node IS active
+    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; 
 
-    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); // Fixed node is the active one
+    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); 
     let changed = false;
 
-    // Check if positions of NON-ACTIVE nodes changed
     for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i].id === activeInteractionNodeId) continue; // Skip the active node
+        if (nodes[i].id === activeInteractionNodeId) continue; 
         const rn = repulsedNodes.find(r => r.id === nodes[i].id);
         if (rn && (Math.abs(nodes[i].x - rn.x) > 0.1 || Math.abs(nodes[i].y - rn.y) > 0.1)) {
             changed = true;
@@ -881,11 +886,10 @@ export default function Home() {
 
     if (changed) {
       const timeoutId = setTimeout(() => {
-        // Only update nodes that are NOT the active one
         setNodes(currentNodes => currentNodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn; // Keep active node as is (it's controlled by user drag)
+            if (cn.id === activeInteractionNodeId) return cn; 
             const rn = repulsedNodes.find(r => r.id === cn.id);
-            return rn || cn; // Update to repulsed position or keep original if not found (should not happen)
+            return rn || cn; 
         }));
       }, 50);
       return () => clearTimeout(timeoutId);
@@ -994,12 +998,12 @@ export default function Home() {
         <div
           ref={transformedContentRef}
           style={{
-            width: '100%', // Takes full width of parent (containerRef)
-            height: '100%', // Takes full height of parent
+            width: '100%', 
+            height: '100%', 
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
-            transformOrigin: '0 0', // Scale/translate from top-left
-            willChange: 'transform', // Performance hint
-            zIndex: 2, // Ensure this is above the screen-space grid (z-0)
+            transformOrigin: '0 0', 
+            willChange: 'transform', 
+            zIndex: 2, 
           }}
         >
           {/* Edges SVG - Uses world coordinates, transformed by parent div */}
@@ -1050,45 +1054,38 @@ export default function Home() {
               top: `${node.y}px`,  // World coordinate
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
-              backgroundColor: "hsl(var(--node-color))", // From globals.css theme
-              color: "hsl(var(--card-foreground))",     // From globals.css theme
-              // zIndex dynamically set based on interaction state
+              backgroundColor: "hsl(var(--node-color))", 
+              color: "hsl(var(--card-foreground))",     
               zIndex: activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10),
-              borderRadius: '9999px', // Fully rounded
+              borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
               textAlign: 'center',
               cursor: 'pointer',
-              boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', // Softer shadow
-              transition: 'box-shadow 0.2s ease, transform 0.2s ease', // Smooth transitions
-              userSelect: 'none', // Prevent text selection during drag
-              border: '1px solid hsl(var(--border))' // Default border
+              boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
+              transition: 'box-shadow 0.2s ease, transform 0.2s ease', 
+              userSelect: 'none', 
+              border: '1px solid hsl(var(--border))' 
             };
-            if (node.type === 'entity') { // Brighter border for entity nodes
-              nodeStyles.borderColor = 'hsl(var(--ring))'; // Use ring color for emphasis
+            if (node.type === 'entity') { 
+              nodeStyles.borderColor = 'hsl(var(--ring))'; 
               nodeStyles.borderWidth = '2px';
             }
 
-            // Enhance shadow and scale for actively interacted node
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
-                nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; // More prominent shadow and outline
-                nodeStyles.transform = 'scale(1.05)'; // Slightly enlarge
+                nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
+                nodeStyles.transform = 'scale(1.05)'; 
             }
             
-            // Dynamic font sizing for node name and tags based on scale
-            // Aim for a readable font size on screen, then convert back to world units for styling
-            const minFontSize = 6; // Minimum font size in screen pixels
-            const baseNameFontSize = 16; // Base font size for name in screen pixels (at scale=1)
-            const baseTagFontSize = 10;  // Base font size for tags in screen pixels (at scale=1)
+            const minFontSize = 6; 
+            const baseNameFontSize = 16; 
+            const baseTagFontSize = 10;  
 
-            // Calculate target font size in screen pixels, capped by minFontSize
-            // Don't let font size get too large when zooming IN beyond scale=1 for this calculation
             const dynamicNameFontSizeScreen = Math.max(minFontSize, baseNameFontSize * Math.min(scale, 1)); 
             const dynamicTagFontSizeScreen = Math.max(minFontSize, baseTagFontSize * Math.min(scale, 1));
 
-            // Convert screen font size back to world units to apply to style (since node itself is scaled)
             const finalNameFontSize = dynamicNameFontSizeScreen / scale;
             const finalTagFontSize = dynamicTagFontSizeScreen / scale;
 
@@ -1104,15 +1101,15 @@ export default function Home() {
               >
                 <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${finalNameFontSize}px`, lineHeight: '1.2' }}>{node.name}</h2>
                 {node.tags.length > 0 && (
-                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]"> {/* Limit height for tags */}
-                    {node.tags.slice(0, 2).map(tag => ( // Show max 2 tags
+                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]"> 
+                    {node.tags.slice(0, 2).map(tag => ( 
                       <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
-                {node.tags.length > 2 && ( // Indicate if more tags exist
+                {node.tags.length > 2 && ( 
                   <span className="text-xs mt-0.5 opacity-70" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>+{node.tags.length - 2} more</span>
                 )}
               </div>
@@ -1129,7 +1126,6 @@ export default function Home() {
               placeholder="Search nodes or type to connect..."
               className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
               onFocus={() => { 
-                // When search bar gets focus, ensure no node interaction is considered active
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
                 if(activeInteractionNodeId) setActiveInteractionNodeId(null); 
               }}
@@ -1137,14 +1133,14 @@ export default function Home() {
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null); // Clear active node when closing search
+                setActiveInteractionNodeId(null); 
               }}
               variant="ghost"
               size="sm"
               className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground hover:text-foreground h-8 w-8 p-0"
               aria-label="Close search bar"
             >
-              <Plus className="h-5 w-5 rotate-45" /> {/* Close icon (rotated plus) */}
+              <Plus className="h-5 w-5 rotate-45" /> 
             </Button>
           </div>
         </div>
@@ -1154,7 +1150,7 @@ export default function Home() {
       <div className="mt-8 flex gap-4">
         <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
             setIsCreateNodeDialogOpen(isOpen);
-            if (!isOpen) setActiveInteractionNodeId(null); // Ensure interaction state is cleared
+            if (!isOpen) setActiveInteractionNodeId(null); 
         }}>
           <DialogTrigger asChild>
             <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
@@ -1243,9 +1239,16 @@ export default function Home() {
                 <Input id="edit-node-tags" value={editNodeTags} onChange={(e) => setEditNodeTags(e.target.value)} placeholder="tag1, tag2" className="text-md p-3" />
               </div>
             </div>
-            <DialogFooter>
-              <DialogClose asChild><Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null);}} className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-              <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Save Changes</Button>
+            <DialogFooter className="flex justify-between items-center">
+              <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5">
+                <Trash2 className="mr-2 h-5 w-5" /> Delete Node
+              </Button>
+              <div>
+                <DialogClose asChild>
+                  <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
+                </DialogClose>
+                <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Save Changes</Button>
+              </div>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1255,7 +1258,6 @@ export default function Home() {
       <Dialog open={isCreateEdgeDialogOpen} onOpenChange={(isOpen) => {
           setIsCreateEdgeDialogOpen(isOpen);
           if (!isOpen) {
-            // Clear states when dialog closes
             setNewEdgeDataSourceNodeId(null);
             setNewEdgeDataTargetNodeId(null);
             setActiveInteractionNodeId(null);
@@ -1315,7 +1317,7 @@ export default function Home() {
                 <p className="text-xs text-muted-foreground">Separate tags with commas. Dates (YYYY-MM-DD) are optional per tag.</p>
               </div>
             </div>
-            <DialogFooter className="flex justify-between"> {/* Align delete button to left, others to right */}
+            <DialogFooter className="flex justify-between"> 
               <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto">
                 <Trash2 className="mr-2 h-5 w-5" /> Delete Edge
               </Button>
