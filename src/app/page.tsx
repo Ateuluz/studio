@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Plus } from "lucide-react";
+import { Plus, Link2 } from "lucide-react";
 
 interface Node {
   id: string;
@@ -29,24 +29,34 @@ interface Node {
   birthday?: string;
 }
 
-const CATEGORY_NODE_DIMENSION = 160; // Corresponds to w-40 h-40 (10rem * 16px/rem)
-const ENTITY_NODE_DIMENSION = 128;   // Corresponds to w-32 h-32 (8rem * 16px/rem)
+interface Edge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  tags: string[];
+  creationDate: string; 
+}
+
+const CATEGORY_NODE_DIMENSION = 160; 
+const ENTITY_NODE_DIMENSION = 128;   
 
 const CATEGORY_NODE_SIZE_CLASS = "w-40 h-40";
 const ENTITY_NODE_SIZE_CLASS = "w-32 h-32";
 
-const CONTAINER_MAX_WIDTH_PX = 768;
-const CONTAINER_HEIGHT_PX = 500;
+const CONTAINER_MAX_WIDTH_PX = 768; // Max width of the node container
+const CONTAINER_HEIGHT_PX = 500;    // Height of the node container
 
-const PRESS_HOLD_THRESHOLD = 700; // ms for press and hold
-const DRAG_MOVE_THRESHOLD = 10; // pixels to differentiate click from drag
-const MAX_PLACEMENT_ATTEMPTS = 30; // Max attempts to find a non-overlapping spot
+const PRESS_HOLD_THRESHOLD = 700; 
+const DRAG_MOVE_THRESHOLD = 10; 
+const MAX_PLACEMENT_ATTEMPTS = 30;
 
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Create Node Dialog
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
   const [newNodeDescription, setNewNodeDescription] = useState("");
   const [newNodeTags, setNewNodeTags] = useState("");
@@ -54,39 +64,55 @@ export default function Home() {
   const [newNodeBirthday, setNewNodeBirthday] = useState("");
 
   // Edit Node Dialog
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isEditNodeDialogOpen, setIsEditNodeDialogOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<Node | null>(null);
   const [editNodeName, setEditNodeName] = useState("");
   const [editNodeDescription, setEditNodeDescription] = useState("");
   const [editNodeTags, setEditNodeTags] = useState("");
   const [editNodeBirthday, setEditNodeBirthday] = useState("");
 
+  // Create Edge Dialog
+  const [isCreateEdgeDialogOpen, setIsCreateEdgeDialogOpen] = useState(false);
+  const [newEdgeDataSourceNodeId, setNewEdgeDataSourceNodeId] = useState<string | null>(null);
+  const [newEdgeDataTargetNodeId, setNewEdgeDataTargetNodeId] = useState<string | null>(null);
+  const [newEdgeTags, setNewEdgeTags] = useState("");
+  const [newEdgeDate, setNewEdgeDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+
   // Interaction States
-  const [activeNodeInteraction, setActiveNodeInteraction] = useState<string | null>(null);
+  const [activeInteractionNodeId, setActiveInteractionNodeId] = useState<string | null>(null);
   const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
   const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null);
+  
+  const [isDraggingForReposition, setIsDraggingForReposition] = useState(false);
+  const [isLinkingModeActive, setIsLinkingModeActive] = useState(false); // True after press-hold completes
+  const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null); // Node from which linking drag started
+  const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
+
   const [showSearchBar, setShowSearchBar] = useState(false);
 
+
+  const getNodeDimension = (nodeOrType: Node | Node['type']) => {
+    const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
+    return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
+  };
 
   const createNode = () => {
     if (newNodeName) {
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
-      
       let newNodeX = 0;
       let newNodeY = 0;
       let placed = false;
       let attempts = 0;
-
-      const newNodeDimension = newNodeType === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
+      const newNodeDimension = getNodeDimension(newNodeType);
 
       do {
         newNodeX = Math.floor(Math.random() * (CONTAINER_MAX_WIDTH_PX - newNodeDimension));
         newNodeY = Math.floor(Math.random() * (CONTAINER_HEIGHT_PX - newNodeDimension));
         let overlap = false;
         for (const existingNode of nodes) {
-          const existingNodeDimension = existingNode.type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
-          // AABB collision detection (Axis-Aligned Bounding Box)
+          const existingNodeDimension = getNodeDimension(existingNode);
           if (
             newNodeX < existingNode.x + existingNodeDimension &&
             newNodeX + newNodeDimension > existingNode.x &&
@@ -97,17 +123,12 @@ export default function Home() {
             break;
           }
         }
-        if (!overlap) {
-          placed = true;
-        }
+        if (!overlap) placed = true;
         attempts++;
       } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
 
       if (!placed) {
-        // Fallback if no non-overlapping spot is found after max attempts
-        // Place it at the last attempted random position, which might overlap.
-        // Or, you could place it at a default corner, or notify the user.
-        console.warn(`Could not find a non-overlapping position for new node "${newNodeName}" after ${MAX_PLACEMENT_ATTEMPTS} attempts. Placing at last attempted position.`);
+        console.warn(`Could not find a non-overlapping position for new node "${newNodeName}" after ${MAX_PLACEMENT_ATTEMPTS} attempts.`);
       }
 
       const newNodeToAdd: Node = {
@@ -121,23 +142,19 @@ export default function Home() {
         birthday: newNodeType === 'entity' ? newNodeBirthday : undefined,
       };
       setNodes([...nodes, newNodeToAdd]);
-      setNewNodeName("");
-      setNewNodeDescription("");
-      setNewNodeTags("");
-      setNewNodeType('category');
-      setNewNodeBirthday("");
-      setIsCreateDialogOpen(false);
+      setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
+      setIsCreateNodeDialogOpen(false);
     }
   };
 
-  const openEditDialog = useCallback((node: Node) => {
+  const openEditNodeDialog = useCallback((node: Node) => {
     setEditingNode(node);
     setEditNodeName(node.name);
     setEditNodeDescription(node.description);
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
-    setIsEditDialogOpen(true);
-    setActiveNodeInteraction(null); 
+    setIsEditNodeDialogOpen(true);
+    setActiveInteractionNodeId(null); 
   }, []); 
 
   const saveNodeChanges = () => {
@@ -145,17 +162,30 @@ export default function Home() {
       const tagsArray = editNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
       setNodes(nodes.map(n =>
         n.id === editingNode.id
-        ? {
-            ...n,
-            name: editNodeName,
-            description: editNodeDescription,
-            tags: tagsArray,
-            birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined
-          }
+        ? { ...n, name: editNodeName, description: editNodeDescription, tags: tagsArray, birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined }
         : n
       ));
       setEditingNode(null);
-      setIsEditDialogOpen(false);
+      setIsEditNodeDialogOpen(false);
+    }
+  };
+
+  const createEdge = () => {
+    if (newEdgeDataSourceNodeId && newEdgeDataTargetNodeId && newEdgeDate) {
+      const tagsArray = newEdgeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
+      const newEdgeToAdd: Edge = {
+        id: crypto.randomUUID(),
+        sourceNodeId: newEdgeDataSourceNodeId,
+        targetNodeId: newEdgeDataTargetNodeId,
+        tags: tagsArray,
+        creationDate: newEdgeDate,
+      };
+      setEdges([...edges, newEdgeToAdd]);
+      setIsCreateEdgeDialogOpen(false);
+      setNewEdgeDataSourceNodeId(null);
+      setNewEdgeDataTargetNodeId(null);
+      setNewEdgeTags("");
+      setNewEdgeDate(new Date().toISOString().split('T')[0]);
     }
   };
 
@@ -163,71 +193,153 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    if (event.type.startsWith('touch')) {
-      event.preventDefault(); // Prevent default touch actions like scrolling
-    }
+    if (event.type.startsWith('touch')) event.preventDefault();
   
-    setActiveNodeInteraction(node.id);
+    setActiveInteractionNodeId(node.id);
     const point = 'touches' in event ? event.touches[0] : event;
     setInteractionStartPos({ x: point.clientX, y: point.clientY });
-    setIsDragging(false);
+    setDragOffset({ x: point.clientX - node.x, y: point.clientY - node.y });
+    
+    setIsDraggingForReposition(false);
+    setIsLinkingModeActive(false);
+    setLinkingSourceNodeId(null);
+    setLinkingLinePreview(null);
   
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
   
     const timer = setTimeout(() => {
-      // Check if the interaction is still active on the same node and not dragging
-      if (activeNodeInteraction === node.id && !isDragging && !showSearchBar) {
-        setShowSearchBar(true); 
-        // activeNodeInteraction is kept for search bar context
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { // Check !isDraggingForReposition
+        setIsLinkingModeActive(true); 
+        setLinkingSourceNodeId(node.id); // Set source node for potential linking
+        // The user might release now (for search) or start dragging (for linking)
       }
-      setPressHoldTimer(null); // Timer has served its purpose
+      setPressHoldTimer(null);
     }, PRESS_HOLD_THRESHOLD);
     setPressHoldTimer(timer);
   };
 
   useEffect(() => {
     const handleInteractionMove = (event: MouseEvent | TouchEvent) => {
-      if (!activeNodeInteraction || !interactionStartPos) return;
+      if (!activeInteractionNodeId || !interactionStartPos || !dragOffset || !containerRef.current) return;
 
       const point = 'touches' in event ? event.touches[0] : event;
       if (!point) return; 
+
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const relativeCursorX = point.clientX - containerRect.left;
+      const relativeCursorY = point.clientY - containerRect.top;
 
       const dx = point.clientX - interactionStartPos.x;
       const dy = point.clientY - interactionStartPos.y;
 
       if (Math.abs(dx) > DRAG_MOVE_THRESHOLD || Math.abs(dy) > DRAG_MOVE_THRESHOLD) {
-        setIsDragging(true);
+        // Drag started
         if (pressHoldTimer) {
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
-        // Node dragging logic (repositioning) would go here in a future step
-        // For now, just setting isDragging prevents edit/search bar
+
+        if (isLinkingModeActive && linkingSourceNodeId) {
+          // Dragging for LINKING
+          setIsDraggingForReposition(false); // Explicitly not repositioning
+          const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
+          if (sourceNode) {
+            const sourceDim = getNodeDimension(sourceNode);
+            setLinkingLinePreview({
+              x1: sourceNode.x + sourceDim / 2,
+              y1: sourceNode.y + sourceDim / 2,
+              x2: relativeCursorX,
+              y2: relativeCursorY,
+            });
+          }
+        } else {
+          // Dragging for REPOSITION
+          setIsDraggingForReposition(true);
+          setNodes(prevNodes => prevNodes.map(n => {
+            if (n.id === activeInteractionNodeId) {
+              const nodeDim = getNodeDimension(n);
+              let newX = point.clientX - dragOffset.x - containerRect.left; // Use relative dragOffset from container
+              let newY = point.clientY - dragOffset.y - containerRect.top;  // Use relative dragOffset from container
+              
+              newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
+              newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
+              return { ...n, x: newX, y: newY };
+            }
+            return n;
+          }));
+        }
       }
     };
 
-    const handleInteractionEnd = () => {
+    const handleInteractionEnd = (event: MouseEvent | TouchEvent) => {
       if (pressHoldTimer) {
         clearTimeout(pressHoldTimer);
         setPressHoldTimer(null);
       }
 
-      if (activeNodeInteraction && !isDragging && !showSearchBar) {
-        // This was a click/tap without dragging before press-hold threshold or search bar shown
-        const node = nodes.find(n => n.id === activeNodeInteraction);
-        if (node) {
-          openEditDialog(node);
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+      if (!point || !containerRef.current) { // Ensure point and containerRef are available
+        // Reset relevant states if point is undefined early
+        if (!showSearchBar) setActiveInteractionNodeId(null);
+        setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
+        setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
+        return;
+      }
+      const containerRect = containerRef.current.getBoundingClientRect();
+
+
+      if (linkingLinePreview && linkingSourceNodeId) { // Was actively trying to link
+        const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
+        if(sourceNode){
+            let targetNode: Node | null = null;
+            const cursorX = point.clientX - containerRect.left;
+            const cursorY = point.clientY - containerRect.top;
+
+            for (const node of nodes) {
+                if (node.id === linkingSourceNodeId) continue;
+                const nodeDim = getNodeDimension(node);
+                if (cursorX >= node.x && cursorX <= node.x + nodeDim &&
+                    cursorY >= node.y && cursorY <= node.y + nodeDim) {
+                    targetNode = node;
+                    break;
+                }
+            }
+
+            if (targetNode) {
+                setNewEdgeDataSourceNodeId(linkingSourceNodeId);
+                setNewEdgeDataTargetNodeId(targetNode.id);
+                setIsCreateEdgeDialogOpen(true);
+            } else { // Link attempt failed, move source node
+                const nodeDim = getNodeDimension(sourceNode);
+                let newX = point.clientX - (dragOffset?.x || 0) - containerRect.left;
+                let newY = point.clientY - (dragOffset?.y || 0) - containerRect.top;
+                newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
+                newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
+                setNodes(prevNodes => prevNodes.map(n => n.id === linkingSourceNodeId ? {...n, x: newX, y: newY} : n));
+            }
         }
+      } else if (isDraggingForReposition) {
+        // Node was repositioned, state already updated in move. Nothing more to do here.
+      } else if (isLinkingModeActive && activeInteractionNodeId) { 
+        // Press-hold completed, then released without significant drag (linkingLinePreview is null)
+        setShowSearchBar(true);
+        // activeInteractionNodeId is kept for search bar context
+      } else if (activeInteractionNodeId && !isDraggingForReposition && !showSearchBar) {
+        // This was a click/tap
+        const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
+        if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
       
       // Reset interaction states
-      // activeNodeInteraction is NOT cleared if showSearchBar is true, as search might need context.
-      // It's cleared when the search bar is closed or an action is taken from it.
-      if (!showSearchBar) {
-         setActiveNodeInteraction(null);
+      if (!showSearchBar && !isCreateEdgeDialogOpen) { // Don't clear active node if search/edge dialog depends on it
+         setActiveInteractionNodeId(null);
       }
       setInteractionStartPos(null);
-      setIsDragging(false);
+      setDragOffset(null);
+      setIsDraggingForReposition(false);
+      setIsLinkingModeActive(false); 
+      setLinkingSourceNodeId(null);
+      setLinkingLinePreview(null);
     };
 
     window.addEventListener('mousemove', handleInteractionMove);
@@ -242,25 +354,59 @@ export default function Home() {
       window.removeEventListener('touchend', handleInteractionEnd);
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeNodeInteraction, interactionStartPos, pressHoldTimer, nodes, isDragging, showSearchBar, openEditDialog]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen]);
 
 
   const [isClient, setIsClient] = useState(false);
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  useEffect(() => setIsClient(true), []);
 
   return (
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
       <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">Node Weaver</h1>
       
       <div
-        className="relative w-full max-w-4xl border rounded-lg shadow-inner bg-card"
-        style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
+        ref={containerRef}
+        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card" // max-w-3xl to match CONTAINER_MAX_WIDTH_PX
+        style={{ height: `${CONTAINER_HEIGHT_PX}px`, maxWidth: `${CONTAINER_MAX_WIDTH_PX}px` }}
       >
+        <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
+          {isClient && edges.map(edge => {
+            const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
+            const targetNode = nodes.find(n => n.id === edge.targetNodeId);
+            if (!sourceNode || !targetNode) return null;
+
+            const sourceDim = getNodeDimension(sourceNode);
+            const targetDim = getNodeDimension(targetNode);
+
+            return (
+              <line
+                key={edge.id}
+                x1={sourceNode.x + sourceDim / 2}
+                y1={sourceNode.y + sourceDim / 2}
+                x2={targetNode.x + targetDim / 2}
+                y2={targetNode.y + targetDim / 2}
+                stroke="hsl(var(--ring))"
+                strokeWidth="2"
+                opacity="0.6"
+              />
+            );
+          })}
+          {linkingLinePreview && (
+            <line
+              x1={linkingLinePreview.x1}
+              y1={linkingLinePreview.y1}
+              x2={linkingLinePreview.x2}
+              y2={linkingLinePreview.y2}
+              stroke="hsl(var(--primary))"
+              strokeWidth="2"
+              strokeDasharray="5,5"
+            />
+          )}
+        </svg>
+
         {isClient && nodes.map((node) => {
           const nodeSizeClass = node.type === 'category' ? CATEGORY_NODE_SIZE_CLASS : ENTITY_NODE_SIZE_CLASS;
-          const nodeDimension = node.type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
+          const nodeDimension = getNodeDimension(node);
           const nodeStyles: React.CSSProperties = {
             backgroundColor: "hsl(var(--node-color))",
             left: `${node.x}px`,
@@ -268,6 +414,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
+            zIndex: 1, // Ensure nodes are above SVG lines
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
@@ -314,7 +461,7 @@ export default function Home() {
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveNodeInteraction(null); 
+                setActiveInteractionNodeId(null); 
               }}
               variant="ghost"
               size="sm"
@@ -327,9 +474,9 @@ export default function Home() {
         </div>
       )}
 
-      <Dialog open={isCreateDialogOpen} onOpenChange={(isOpen) => {
-          setIsCreateDialogOpen(isOpen);
-          if (!isOpen) setActiveNodeInteraction(null); 
+      <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
+          setIsCreateNodeDialogOpen(isOpen);
+          if (!isOpen) setActiveInteractionNodeId(null); 
       }}>
         <DialogTrigger asChild>
           <Button className="mt-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
@@ -344,153 +491,113 @@ export default function Home() {
           </DialogHeader>
           <div className="grid gap-6 py-6">
             <div className="grid gap-3">
-              <Label htmlFor="create-name" className="text-md">Name</Label>
-              <Input
-                id="create-name"
-                placeholder="Node Name (e.g., Project Alpha)"
-                value={newNodeName}
-                onChange={(e) => setNewNodeName(e.target.value)}
-                className="text-md p-3"
-              />
+              <Label htmlFor="create-node-name" className="text-md">Name</Label>
+              <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
             </div>
             <div className="grid gap-3">
                 <Label className="text-md">Type</Label>
-                <RadioGroup
-                    defaultValue="category"
-                    onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)}
-                    value={newNodeType}
-                    className="flex space-x-4 pt-1"
-                >
-                    <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="category" id="type-category-create" />
-                        <Label htmlFor="type-category-create">Category</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="entity" id="type-entity-create" />
-                        <Label htmlFor="type-entity-create">Entity</Label>
-                    </div>
+                <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
                 </RadioGroup>
             </div>
             {newNodeType === 'entity' && (
               <div className="grid gap-3">
-                <Label htmlFor="create-birthday" className="text-md">Birthday</Label>
-                <Input
-                  id="create-birthday"
-                  type="date"
-                  value={newNodeBirthday}
-                  onChange={(e) => setNewNodeBirthday(e.target.value)}
-                  className="text-md p-3"
-                />
+                <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
+                <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
               </div>
             )}
             <div className="grid gap-3">
-              <Label htmlFor="create-description" className="text-md">Description</Label>
-              <Input
-                id="create-description"
-                placeholder="Brief description (optional)"
-                value={newNodeDescription}
-                onChange={(e) => setNewNodeDescription(e.target.value)}
-                className="text-md p-3"
-              />
+              <Label htmlFor="create-node-description" className="text-md">Description</Label>
+              <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
             </div>
             <div className="grid gap-3">
-              <Label htmlFor="create-tags" className="text-md">Tags</Label>
-              <Input
-                id="create-tags"
-                placeholder="tag1, tag2 (comma-separated, optional)"
-                value={newNodeTags}
-                onChange={(e) => setNewNodeTags(e.target.value)}
-                className="text-md p-3"
-              />
+              <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
+              <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
             </div>
           </div>
           <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button>
-            </DialogClose>
-            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">
-              Create Node
-            </Button>
+            <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
+            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {editingNode && (
-        <Dialog open={isEditDialogOpen} onOpenChange={(isOpen) => {
-            setIsEditDialogOpen(isOpen);
-            if (!isOpen) {
-                setEditingNode(null); 
-                setActiveNodeInteraction(null);
-            }
+        <Dialog open={isEditNodeDialogOpen} onOpenChange={(isOpen) => {
+            setIsEditNodeDialogOpen(isOpen);
+            if (!isOpen) { setEditingNode(null); setActiveInteractionNodeId(null); }
         }}>
           <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
             <DialogHeader>
               <DialogTitle className="text-2xl">Edit Node: {editingNode.name}</DialogTitle>
-              <DialogDescription>Modify the attributes of this node. Click save when you're done.</DialogDescription>
+              <DialogDescription>Modify attributes. Click save when done.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-6 py-6">
               <div className="grid gap-3">
-                <Label htmlFor="edit-name" className="text-md">Name</Label>
-                <Input
-                  id="edit-name"
-                  value={editNodeName}
-                  onChange={(e) => setEditNodeName(e.target.value)}
-                  className="text-md p-3"
-                />
+                <Label htmlFor="edit-node-name" className="text-md">Name</Label>
+                <Input id="edit-node-name" value={editNodeName} onChange={(e) => setEditNodeName(e.target.value)} className="text-md p-3" />
               </div>
               <div className="grid gap-3">
                 <Label className="text-md">Type</Label>
-                <p className="text-md p-3 bg-muted/50 rounded-md border border-input capitalize select-none">
-                    {editingNode?.type}
-                </p>
+                <p className="text-md p-3 bg-muted/50 rounded-md border border-input capitalize select-none">{editingNode?.type}</p>
               </div>
               {editingNode?.type === 'entity' && (
                 <div className="grid gap-3">
-                  <Label htmlFor="edit-birthday" className="text-md">Birthday</Label>
-                  <Input
-                    id="edit-birthday"
-                    type="date"
-                    value={editNodeBirthday}
-                    onChange={(e) => setEditNodeBirthday(e.target.value)}
-                    className="text-md p-3"
-                  />
+                  <Label htmlFor="edit-node-birthday" className="text-md">Birthday</Label>
+                  <Input id="edit-node-birthday" type="date" value={editNodeBirthday} onChange={(e) => setEditNodeBirthday(e.target.value)} className="text-md p-3" />
                 </div>
               )}
               <div className="grid gap-3">
-                <Label htmlFor="edit-description" className="text-md">Description</Label>
-                <Input
-                  id="edit-description"
-                  value={editNodeDescription}
-                  onChange={(e) => setEditNodeDescription(e.target.value)}
-                  className="text-md p-3"
-                />
+                <Label htmlFor="edit-node-description" className="text-md">Description</Label>
+                <Input id="edit-node-description" value={editNodeDescription} onChange={(e) => setEditNodeDescription(e.target.value)} className="text-md p-3" />
               </div>
               <div className="grid gap-3">
-                <Label htmlFor="edit-tags" className="text-md">Tags</Label>
-                <Input
-                  id="edit-tags"
-                  value={editNodeTags}
-                  onChange={(e) => setEditNodeTags(e.target.value)}
-                  placeholder="tag1, tag2 (comma-separated)"
-                  className="text-md p-3"
-                />
+                <Label htmlFor="edit-node-tags" className="text-md">Tags</Label>
+                <Input id="edit-node-tags" value={editNodeTags} onChange={(e) => setEditNodeTags(e.target.value)} placeholder="tag1, tag2" className="text-md p-3" />
               </div>
             </div>
             <DialogFooter>
-              <DialogClose asChild>
-                 <Button variant="outline" onClick={() => {
-                     setIsEditDialogOpen(false);
-                     setEditingNode(null);
-                     setActiveNodeInteraction(null);
-                    }} className="text-md px-5 py-2.5">Cancel</Button>
-              </DialogClose>
-              <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">
-                Save Changes
-              </Button>
+              <DialogClose asChild><Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null);}} className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
+              <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Save Changes</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog open={isCreateEdgeDialogOpen} onOpenChange={(isOpen) => {
+          setIsCreateEdgeDialogOpen(isOpen);
+          if (!isOpen) { 
+            setNewEdgeDataSourceNodeId(null); 
+            setNewEdgeDataTargetNodeId(null); 
+            setActiveInteractionNodeId(null); // Clear active node if dialog is closed
+          }
+      }}>
+        <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
+          <DialogHeader>
+            <DialogTitle className="text-2xl">Create New Edge</DialogTitle>
+            <DialogDescription>
+              Connecting '{nodes.find(n=>n.id===newEdgeDataSourceNodeId)?.name}' to '{nodes.find(n=>n.id===newEdgeDataTargetNodeId)?.name}'. Add details.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-6 py-6">
+            <div className="grid gap-3">
+              <Label htmlFor="create-edge-tags" className="text-md">Tags</Label>
+              <Input id="create-edge-tags" placeholder="tag1, tag2 (optional)" value={newEdgeTags} onChange={(e) => setNewEdgeTags(e.target.value)} className="text-md p-3" />
+            </div>
+            <div className="grid gap-3">
+              <Label htmlFor="create-edge-date" className="text-md">Creation Date</Label>
+              <Input id="create-edge-date" type="date" value={newEdgeDate} onChange={(e) => setNewEdgeDate(e.target.value)} className="text-md p-3" />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
+            <Button type="submit" onClick={createEdge} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5"><Link2 className="mr-2 h-5 w-5" />Create Edge</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </main>
   );
 }
+
