@@ -193,12 +193,22 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    if (event.type.startsWith('touch')) event.preventDefault();
+    if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
   
     setActiveInteractionNodeId(node.id);
     const point = 'touches' in event ? event.touches[0] : event;
     setInteractionStartPos({ x: point.clientX, y: point.clientY });
-    setDragOffset({ x: point.clientX - node.x, y: point.clientY - node.y });
+    // Calculate dragOffset relative to the container's top-left for consistency
+    if (containerRef.current) {
+        const containerRect = containerRef.current.getBoundingClientRect();
+        setDragOffset({ 
+            x: point.clientX - containerRect.left - node.x, 
+            y: point.clientY - containerRect.top - node.y 
+        });
+    } else {
+        // Fallback if containerRef is not yet available (should be rare)
+        setDragOffset({ x: point.clientX - node.x, y: point.clientY - node.y });
+    }
     
     setIsDraggingForReposition(false);
     setIsLinkingModeActive(false);
@@ -208,10 +218,10 @@ export default function Home() {
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
   
     const timer = setTimeout(() => {
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { // Check !isDraggingForReposition
+      // Check if still the active node, not already dragging for reposition, and search not shown
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
         setIsLinkingModeActive(true); 
-        setLinkingSourceNodeId(node.id); // Set source node for potential linking
-        // The user might release now (for search) or start dragging (for linking)
+        setLinkingSourceNodeId(node.id); 
       }
       setPressHoldTimer(null);
     }, PRESS_HOLD_THRESHOLD);
@@ -221,6 +231,8 @@ export default function Home() {
   useEffect(() => {
     const handleInteractionMove = (event: MouseEvent | TouchEvent) => {
       if (!activeInteractionNodeId || !interactionStartPos || !dragOffset || !containerRef.current) return;
+      if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+
 
       const point = 'touches' in event ? event.touches[0] : event;
       if (!point) return; 
@@ -233,15 +245,13 @@ export default function Home() {
       const dy = point.clientY - interactionStartPos.y;
 
       if (Math.abs(dx) > DRAG_MOVE_THRESHOLD || Math.abs(dy) > DRAG_MOVE_THRESHOLD) {
-        // Drag started
         if (pressHoldTimer) {
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
 
         if (isLinkingModeActive && linkingSourceNodeId) {
-          // Dragging for LINKING
-          setIsDraggingForReposition(false); // Explicitly not repositioning
+          setIsDraggingForReposition(false); 
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if (sourceNode) {
             const sourceDim = getNodeDimension(sourceNode);
@@ -253,13 +263,13 @@ export default function Home() {
             });
           }
         } else {
-          // Dragging for REPOSITION
           setIsDraggingForReposition(true);
           setNodes(prevNodes => prevNodes.map(n => {
             if (n.id === activeInteractionNodeId) {
               const nodeDim = getNodeDimension(n);
-              let newX = point.clientX - dragOffset.x - containerRect.left; // Use relative dragOffset from container
-              let newY = point.clientY - dragOffset.y - containerRect.top;  // Use relative dragOffset from container
+              // Use dragOffset calculated relative to container for correct positioning
+              let newX = relativeCursorX - dragOffset.x;
+              let newY = relativeCursorY - dragOffset.y;
               
               newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
               newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
@@ -278,9 +288,8 @@ export default function Home() {
       }
 
       const point = 'changedTouches' in event ? event.changedTouches[0] : event;
-      if (!point || !containerRef.current) { // Ensure point and containerRef are available
-        // Reset relevant states if point is undefined early
-        if (!showSearchBar) setActiveInteractionNodeId(null);
+      if (!point || !containerRef.current) {
+        if (!showSearchBar && !isCreateEdgeDialogOpen) setActiveInteractionNodeId(null);
         setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
         setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
         return;
@@ -288,7 +297,7 @@ export default function Home() {
       const containerRect = containerRef.current.getBoundingClientRect();
 
 
-      if (linkingLinePreview && linkingSourceNodeId) { // Was actively trying to link
+      if (linkingLinePreview && linkingSourceNodeId) { 
         const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
         if(sourceNode){
             let targetNode: Node | null = null;
@@ -309,29 +318,53 @@ export default function Home() {
                 setNewEdgeDataSourceNodeId(linkingSourceNodeId);
                 setNewEdgeDataTargetNodeId(targetNode.id);
                 setIsCreateEdgeDialogOpen(true);
-            } else { // Link attempt failed, move source node
+            } else { 
                 const nodeDim = getNodeDimension(sourceNode);
-                let newX = point.clientX - (dragOffset?.x || 0) - containerRect.left;
-                let newY = point.clientY - (dragOffset?.y || 0) - containerRect.top;
+                // Use relativeCursorX/Y and dragOffset for correct new position
+                let newX = (point.clientX - containerRect.left) - (dragOffset?.x || 0) ;
+                let newY = (point.clientY - containerRect.top) - (dragOffset?.y || 0);
+
                 newX = Math.max(0, Math.min(newX, CONTAINER_MAX_WIDTH_PX - nodeDim));
                 newY = Math.max(0, Math.min(newY, CONTAINER_HEIGHT_PX - nodeDim));
                 setNodes(prevNodes => prevNodes.map(n => n.id === linkingSourceNodeId ? {...n, x: newX, y: newY} : n));
             }
         }
       } else if (isDraggingForReposition) {
-        // Node was repositioned, state already updated in move. Nothing more to do here.
+        const draggedNodeId = activeInteractionNodeId;
+        const draggedNode = nodes.find(n => n.id === draggedNodeId);
+
+        if (draggedNode) {
+            const cursorReleaseX = point.clientX - containerRect.left;
+            const cursorReleaseY = point.clientY - containerRect.top;
+
+            let targetNodeUnderneath: Node | null = null;
+            for (const otherNode of nodes) {
+                if (otherNode.id === draggedNode.id) continue;
+
+                const otherNodeDim = getNodeDimension(otherNode);
+                if (
+                    cursorReleaseX >= otherNode.x && cursorReleaseX <= otherNode.x + otherNodeDim &&
+                    cursorReleaseY >= otherNode.y && cursorReleaseY <= otherNode.y + otherNodeDim
+                ) {
+                    targetNodeUnderneath = otherNode;
+                    break;
+                }
+            }
+
+            if (targetNodeUnderneath) {
+                setNewEdgeDataSourceNodeId(draggedNode.id);
+                setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
+                setIsCreateEdgeDialogOpen(true);
+            }
+        }
       } else if (isLinkingModeActive && activeInteractionNodeId) { 
-        // Press-hold completed, then released without significant drag (linkingLinePreview is null)
         setShowSearchBar(true);
-        // activeInteractionNodeId is kept for search bar context
       } else if (activeInteractionNodeId && !isDraggingForReposition && !showSearchBar) {
-        // This was a click/tap
         const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
         if (nodeToEdit) openEditNodeDialog(nodeToEdit);
       }
       
-      // Reset interaction states
-      if (!showSearchBar && !isCreateEdgeDialogOpen) { // Don't clear active node if search/edge dialog depends on it
+      if (!showSearchBar && !isCreateEdgeDialogOpen) { 
          setActiveInteractionNodeId(null);
       }
       setInteractionStartPos(null);
@@ -342,19 +375,30 @@ export default function Home() {
       setLinkingLinePreview(null);
     };
 
+    // Attach event listeners
+    const currentContainer = containerRef.current; // Capture ref for cleanup
+    
+    // Mouse events on window for broader drag detection
     window.addEventListener('mousemove', handleInteractionMove);
     window.addEventListener('mouseup', handleInteractionEnd);
-    window.addEventListener('touchmove', handleInteractionMove, { passive: false });
-    window.addEventListener('touchend', handleInteractionEnd);
+    
+    // Touch events on container to ensure preventDefault works correctly for scrolling
+    if (currentContainer) {
+        currentContainer.addEventListener('touchmove', handleInteractionMove, { passive: false });
+        currentContainer.addEventListener('touchend', handleInteractionEnd);
+    }
+
 
     return () => {
       window.removeEventListener('mousemove', handleInteractionMove);
-      window.removeEventListener('mouseup', handleInteractionEnd);
-      window.removeEventListener('touchmove', handleInteractionMove);
-      window.removeEventListener('touchend', handleInteractionEnd);
+      window.removeEventListener('mouseup',handleInteractionEnd);
+      if (currentContainer) {
+        currentContainer.removeEventListener('touchmove', handleInteractionMove);
+        currentContainer.removeEventListener('touchend', handleInteractionEnd);
+      }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, edges]); // Added edges to dependency array
 
 
   const [isClient, setIsClient] = useState(false);
@@ -366,7 +410,7 @@ export default function Home() {
       
       <div
         ref={containerRef}
-        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card" // max-w-3xl to match CONTAINER_MAX_WIDTH_PX
+        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none" // touch-none to prevent default scroll/zoom on touch devices within this container
         style={{ height: `${CONTAINER_HEIGHT_PX}px`, maxWidth: `${CONTAINER_MAX_WIDTH_PX}px` }}
       >
         <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
@@ -405,7 +449,6 @@ export default function Home() {
         </svg>
 
         {isClient && nodes.map((node) => {
-          const nodeSizeClass = node.type === 'category' ? CATEGORY_NODE_SIZE_CLASS : ENTITY_NODE_SIZE_CLASS;
           const nodeDimension = getNodeDimension(node);
           const nodeStyles: React.CSSProperties = {
             backgroundColor: "hsl(var(--node-color))",
@@ -414,7 +457,7 @@ export default function Home() {
             width: `${nodeDimension}px`,
             height: `${nodeDimension}px`,
             color: "hsl(var(--card-foreground))",
-            zIndex: 1, // Ensure nodes are above SVG lines
+            zIndex: 1, 
           };
           if (node.type === 'entity') {
             nodeStyles.borderColor = 'hsl(var(--ring))';
@@ -424,7 +467,7 @@ export default function Home() {
           return (
             <div
               key={node.id}
-              className={`absolute p-3 rounded-full flex flex-col items-center justify-center text-center cursor-pointer shadow-xl transition-all duration-300 hover:shadow-2xl hover:scale-105 select-none border`}
+              className={`absolute p-3 rounded-full flex flex-col items-center justify-center text-center cursor-pointer shadow-xl transition-shadow duration-300 hover:shadow-2xl select-none border`}
               style={nodeStyles}
               onMouseDown={(e) => handleNodeInteractionStart(e, node)}
               onTouchStart={(e) => handleNodeInteractionStart(e, node)}
@@ -570,7 +613,7 @@ export default function Home() {
           if (!isOpen) { 
             setNewEdgeDataSourceNodeId(null); 
             setNewEdgeDataTargetNodeId(null); 
-            setActiveInteractionNodeId(null); // Clear active node if dialog is closed
+            setActiveInteractionNodeId(null); 
           }
       }}>
         <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
@@ -600,4 +643,3 @@ export default function Home() {
     </main>
   );
 }
-
