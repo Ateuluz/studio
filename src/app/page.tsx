@@ -204,10 +204,17 @@ export default function Home() {
 
     try {
       loadedNodes = await loadNodesFromFile();
-      loadedEdges = await loadEdgesFromFile();
     } catch (error) {
-      console.error("Failed to load data from server actions:", error);
+        console.warn("Error loading nodes file, starting with empty nodes:", error);
+        loadedNodes = [];
     }
+    try {
+        loadedEdges = await loadEdgesFromFile();
+    } catch (error) {
+        console.warn("Error loading edges file, starting with empty edges:", error);
+        loadedEdges = [];
+    }
+
 
     let nodesToSet = loadedNodes;
     let mainNodeFoundAndCentered = false;
@@ -228,6 +235,7 @@ export default function Home() {
             }));
             nodesToSet = adjustedNodes;
             mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
+            await saveNodesToFileCallback(nodesToSet); // Save after adjustment
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
@@ -242,11 +250,7 @@ export default function Home() {
     setNodes(nodesToSet);
     setEdges(loadedEdges);
     
-    if (mainNodeFoundAndCentered) {
-        await saveNodesToFileCallback(nodesToSet);
-    }
-
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback]);
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId]);
 
 
   useEffect(() => {
@@ -341,8 +345,8 @@ export default function Home() {
         finalMaxOffsetY = maxOffsetY;
     }
     
-    const newPanXLimits = { min: Math.min(finalMinOffsetX, finalMaxOffsetX), max: Math.max(finalMinOffsetX, finalMaxOffsetX) };
-    const newPanYLimits = { min: Math.min(finalMinOffsetY, finalMaxOffsetY), max: Math.max(finalMinOffsetY, finalMaxOffsetY) };
+    const newPanXLimits = { min: Math.round(Math.min(finalMinOffsetX, finalMaxOffsetX)), max: Math.round(Math.max(finalMinOffsetX, finalMaxOffsetX)) };
+    const newPanYLimits = { min: Math.round(Math.min(finalMinOffsetY, finalMaxOffsetY)), max: Math.round(Math.max(finalMinOffsetY, finalMaxOffsetY)) };
     
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
@@ -353,8 +357,8 @@ export default function Home() {
   useEffect(() => {
     if (activeInteractionNodeId) return;
     const currentClampedOffsetX = Math.max(panXSliderLimits.min, Math.min(panXSliderLimits.max, offsetX));
-    if (currentClampedOffsetX !== offsetX && isFinite(currentClampedOffsetX)) {
-        setOffsetX(currentClampedOffsetX);
+    if (Math.round(currentClampedOffsetX) !== Math.round(offsetX) && isFinite(currentClampedOffsetX)) {
+        setOffsetX(Math.round(currentClampedOffsetX));
     }
   }, [panXSliderLimits, offsetX, activeInteractionNodeId]);
 
@@ -362,8 +366,8 @@ export default function Home() {
   useEffect(() => {
     if (activeInteractionNodeId) return;
     const currentClampedOffsetY = Math.max(panYSliderLimits.min, Math.min(panYSliderLimits.max, offsetY));
-    if (currentClampedOffsetY !== offsetY && isFinite(currentClampedOffsetY)) {
-        setOffsetY(currentClampedOffsetY);
+    if (Math.round(currentClampedOffsetY) !== Math.round(offsetY) && isFinite(currentClampedOffsetY)) {
+        setOffsetY(Math.round(currentClampedOffsetY));
     }
   }, [panYSliderLimits, offsetY, activeInteractionNodeId]);
 
@@ -1162,7 +1166,22 @@ export default function Home() {
 
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
-            const activeTransform = (activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)) ? ' scale(1.05)' : '';
+            
+            let activeTransform = '';
+            if (activeInteractionNodeId === node.id) {
+                if (isLinkingModeActive && linkingSourceNodeId === node.id) {
+                    // Apply scale if it's the source node in linking mode
+                    activeTransform = ' scale(1.05)';
+                } else if (isDraggingForReposition) {
+                    // No scale if simply dragging for repositioning
+                    activeTransform = ''; 
+                } else if (!isDraggingForReposition && !isLinkingModeActive) {
+                    // Could be a pending click or press-hold release, apply scale for visual feedback
+                     activeTransform = ' scale(1.05)';
+                }
+            }
+
+
             const zIndexValue = activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10);
 
             const nodeStyles: React.CSSProperties = {
@@ -1473,6 +1492,3 @@ export default function Home() {
     </main>
   );
 }
-
-
-    
