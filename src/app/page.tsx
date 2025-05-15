@@ -19,7 +19,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3, Search } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
+import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3, Search as SearchIconLucide } from "lucide-react";
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 import { cn } from "@/lib/utils";
@@ -216,6 +217,9 @@ export default function Home() {
   const [editNodeDescription, setEditNodeDescription] = useState("");
   const [editNodeTags, setEditNodeTags] = useState("");
   const [editNodeBirthday, setEditNodeBirthday] = useState("");
+  const [connectNodeSearchQuery, setConnectNodeSearchQuery] = useState("");
+  const [connectNodeSearchResults, setConnectNodeSearchResults] = useState<Node[]>([]);
+
 
   const [isCreateEdgeDialogOpen, setIsCreateEdgeDialogOpen] = useState(false);
   const [newEdgeDataSourceNodeId, setNewEdgeDataSourceNodeId] = useState<string | null>(null);
@@ -422,7 +426,7 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode]); 
+  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]); 
 
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
@@ -549,6 +553,8 @@ export default function Home() {
     setEditNodeDescription(node.description);
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
+    setConnectNodeSearchQuery(""); 
+    setConnectNodeSearchResults([]); 
     setIsEditNodeDialogOpen(true);
     setActiveInteractionNodeId(null); 
   }, []);
@@ -1001,7 +1007,7 @@ export default function Home() {
       setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
-      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight // Added containerHeight
+      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight 
   ]);
 
 
@@ -1220,7 +1226,7 @@ export default function Home() {
       }
     });
 
-    setSearchResults([...nameMatches, ...tagMatches]);
+    setSearchResults([...nameMatches, ...tagMatches.filter(tm => !nameMatches.find(nm => nm.id === tm.id))]);
   }, [searchQuery, nodes]);
 
   const handleSearchResultClick = (node: Node) => {
@@ -1238,6 +1244,41 @@ export default function Home() {
   
   const isCreateNodeButtonDisabled = !newNodeName.trim() || nodes.some(node => node.name.toLowerCase() === newNodeName.trim().toLowerCase());
   const isEditNodeButtonDisabled = editingNode && (!editNodeName.trim() || nodes.some(node => node.id !== editingNode?.id && node.name.toLowerCase() === editNodeName.trim().toLowerCase()));
+
+  // For in-dialog node connection search
+  useEffect(() => {
+    if (!editingNode || !connectNodeSearchQuery.trim()) {
+      setConnectNodeSearchResults([]);
+      return;
+    }
+    const lowerCaseQuery = connectNodeSearchQuery.toLowerCase();
+    const filtered = nodes.filter(node =>
+      node.id !== editingNode.id && // Exclude the node being edited
+      (node.name.toLowerCase().includes(lowerCaseQuery) ||
+        node.tags.some(tag => tag.toLowerCase().includes(lowerCaseQuery)))
+    );
+    setConnectNodeSearchResults(filtered);
+  }, [connectNodeSearchQuery, nodes, editingNode]);
+
+  const handleConnectNodeSelect = (targetNode: Node) => {
+    if (!editingNode) return;
+
+    const existingEdge = findExistingEdge(editingNode.id, targetNode.id);
+    if (existingEdge) {
+      setEditingEdge(existingEdge);
+      setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
+      setIsEditEdgeDialogOpen(true);
+    } else {
+      setNewEdgeDataSourceNodeId(editingNode.id);
+      setNewEdgeDataTargetNodeId(targetNode.id);
+      setNewEdgeTagsInput("");
+      setIsCreateEdgeDialogOpen(true);
+    }
+    // Reset search and close edit node dialog
+    setConnectNodeSearchQuery("");
+    setConnectNodeSearchResults([]);
+    setIsEditNodeDialogOpen(false); 
+  };
 
 
   return (
@@ -1284,14 +1325,11 @@ export default function Home() {
 
                       if (containerRef.current && containerWidth > 0 && containerHeight > 0 && Math.abs(finalNewScale - scale) > 0.0001) {
                           const rect = containerRef.current.getBoundingClientRect();
-                          // Absolute screen coordinates of the viewport center
                           const absScreenCenterX = rect.left + (containerWidth / 2);
                           const absScreenCenterY = rect.top + (containerHeight / 2);
               
-                          // World point currently at the screen center (using PREVIOUS scale, offsetX, offsetY)
                           const worldPointAtScreenCenter = screenToWorld(absScreenCenterX, absScreenCenterY);
                           
-                          // Calculate new offsets to keep this worldPointAtScreenCenter at screen center with finalNewScale
                           const newOffsetX = (containerWidth / 2) - (worldPointAtScreenCenter.x * finalNewScale);
                           const newOffsetY = (containerHeight / 2) - (worldPointAtScreenCenter.y * finalNewScale);
                           
@@ -1299,7 +1337,6 @@ export default function Home() {
                           setOffsetX(Math.round(newOffsetX));
                           setOffsetY(Math.round(newOffsetY));
                       } else if (Math.abs(finalNewScale - scale) > 0.0001) {
-                          // Fallback if container not fully ready, but scale should still change
                           setScale(finalNewScale);
                       }
                   }}
@@ -1433,7 +1470,7 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease', 
+              transition: 'box-shadow 0.2s ease, transform 0.1s ease-out', 
               userSelect: 'none', 
               border: '1px solid hsl(var(--border))' 
             };
@@ -1532,7 +1569,7 @@ export default function Home() {
           >
             <DialogTrigger asChild>
               <Button variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
-                <Search className="mr-2 h-5 w-5" />
+                <SearchIconLucide className="mr-2 h-5 w-5" />
                 Search Nodes
               </Button>
             </DialogTrigger>
@@ -1613,48 +1650,87 @@ export default function Home() {
       {editingNode && (
         <Dialog open={isEditNodeDialogOpen} onOpenChange={(isOpen) => {
             setIsEditNodeDialogOpen(isOpen);
-            if (!isOpen) { setEditingNode(null); setActiveInteractionNodeId(null); }
+            if (!isOpen) { 
+                setEditingNode(null); 
+                setActiveInteractionNodeId(null);
+                setConnectNodeSearchQuery("");
+                setConnectNodeSearchResults([]);
+            }
         }}>
           <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
-            <DialogHeader>
-              <DialogTitle className="text-2xl">Edit Node: {editingNode.name}</DialogTitle>
-              <DialogDescription>Modify attributes. Click save when done.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-6 py-6">
-              <div className="grid gap-3">
-                <Label htmlFor="edit-node-name" className="text-md">Name</Label>
-                <Input id="edit-node-name" value={editNodeName} onChange={(e) => setEditNodeName(e.target.value)} className="text-md p-3" />
-              </div>
-              <div className="grid gap-3">
-                <Label className="text-md">Type</Label>
-                <p className="text-md p-3 bg-muted/50 rounded-md border border-input capitalize select-none">{editingNode?.type}</p>
-              </div>
-              {editingNode?.type === 'entity' && (
+          <ScrollArea className="max-h-[80vh] p-0"> {/* Adjusted padding to p-0 for ScrollArea */}
+            <div className="p-6"> {/* Added inner div for actual padding */}
+              <DialogHeader>
+                <DialogTitle className="text-2xl">Edit Node: {editingNode.name}</DialogTitle>
+                <DialogDescription>Modify attributes or connect to another node.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-6 py-6">
                 <div className="grid gap-3">
-                  <Label htmlFor="edit-node-birthday" className="text-md">Birthday</Label>
-                  <Input id="edit-node-birthday" type="date" value={editNodeBirthday} onChange={(e) => setEditNodeBirthday(e.target.value)} className="text-md p-3" />
+                  <Label htmlFor="edit-node-name" className="text-md">Name</Label>
+                  <Input id="edit-node-name" value={editNodeName} onChange={(e) => setEditNodeName(e.target.value)} className="text-md p-3" />
                 </div>
-              )}
-              <div className="grid gap-3">
-                <Label htmlFor="edit-node-description" className="text-md">Description</Label>
-                <Input id="edit-node-description" value={editNodeDescription} onChange={(e) => setEditNodeDescription(e.target.value)} className="text-md p-3" />
+                <div className="grid gap-3">
+                  <Label className="text-md">Type</Label>
+                  <p className="text-md p-3 bg-muted/50 rounded-md border border-input capitalize select-none">{editingNode?.type}</p>
+                </div>
+                {editingNode?.type === 'entity' && (
+                  <div className="grid gap-3">
+                    <Label htmlFor="edit-node-birthday" className="text-md">Birthday</Label>
+                    <Input id="edit-node-birthday" type="date" value={editNodeBirthday} onChange={(e) => setEditNodeBirthday(e.target.value)} className="text-md p-3" />
+                  </div>
+                )}
+                <div className="grid gap-3">
+                  <Label htmlFor="edit-node-description" className="text-md">Description</Label>
+                  <Input id="edit-node-description" value={editNodeDescription} onChange={(e) => setEditNodeDescription(e.target.value)} className="text-md p-3" />
+                </div>
+                <div className="grid gap-3">
+                  <Label htmlFor="edit-node-tags" className="text-md">Tags</Label>
+                  <Input id="edit-node-tags" value={editNodeTags} onChange={(e) => setEditNodeTags(e.target.value)} placeholder="tag1, tag2" className="text-md p-3" />
+                </div>
+                
+                <Separator className="my-4" />
+
+                <div className="grid gap-3">
+                  <Label htmlFor="connect-node-search" className="text-md">Connect to Node</Label>
+                  <Input 
+                    id="connect-node-search" 
+                    placeholder="Search node by name or tag..." 
+                    value={connectNodeSearchQuery} 
+                    onChange={(e) => setConnectNodeSearchQuery(e.target.value)} 
+                    className="text-md p-3"
+                  />
+                  {connectNodeSearchQuery.trim() && connectNodeSearchResults.length > 0 && (
+                    <ScrollArea className="h-[150px] w-full rounded-md border p-2 mt-2">
+                      {connectNodeSearchResults.map(node => (
+                        <div
+                          key={node.id}
+                          onClick={() => handleConnectNodeSelect(node)}
+                          className="p-2 hover:bg-accent rounded-md cursor-pointer text-sm"
+                        >
+                          <p className="font-medium">{node.name}</p>
+                          {node.tags.length > 0 && <p className="text-xs text-muted-foreground">{node.tags.join(', ')}</p>}
+                        </div>
+                      ))}
+                    </ScrollArea>
+                  )}
+                   {connectNodeSearchQuery.trim() && connectNodeSearchResults.length === 0 && (
+                    <p className="text-xs text-muted-foreground mt-2 text-center">No nodes found to connect.</p>
+                  )}
+                </div>
               </div>
-              <div className="grid gap-3">
-                <Label htmlFor="edit-node-tags" className="text-md">Tags</Label>
-                <Input id="edit-node-tags" value={editNodeTags} onChange={(e) => setEditNodeTags(e.target.value)} placeholder="tag1, tag2" className="text-md p-3" />
-              </div>
-            </div>
-            <DialogFooter className="flex justify-between items-center"> 
-              <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5">
-                <Trash2 className="mr-2 h-5 w-5" /> Delete Node
-              </Button>
-              <div>
-                <DialogClose asChild>
-                  <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
-                </DialogClose>
-                <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled}>Save Changes</Button>
-              </div>
-            </DialogFooter>
+              <DialogFooter className="flex justify-between items-center pt-2"> {/* Adjusted padding for footer */}
+                <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5">
+                  <Trash2 className="mr-2 h-5 w-5" /> Delete Node
+                </Button>
+                <div>
+                  <DialogClose asChild>
+                    <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null); setConnectNodeSearchQuery(""); setConnectNodeSearchResults([]);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
+                  </DialogClose>
+                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled}>Save Changes</Button>
+                </div>
+              </DialogFooter>
+            </div> {/* End of inner padding div */}
+          </ScrollArea>
           </DialogContent>
         </Dialog>
       )}
@@ -1785,4 +1861,6 @@ export default function Home() {
     </main>
   );
 }
+    
+
     
