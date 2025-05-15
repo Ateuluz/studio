@@ -18,9 +18,10 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Plus, Link2, Trash2, Download, Upload } from "lucide-react";
+import { Plus, Link2, Trash2, Download, Upload, Settings, ChevronsUpDown, XIcon, Rows3 } from "lucide-react";
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
+import { cn } from "@/lib/utils";
 
 
 const CATEGORY_NODE_DIMENSION = 160;
@@ -56,7 +57,6 @@ function linearToLogScale(
   logMax: number
 ): number {
   if (logMin <= 0 || logMax <= 0) {
-    // console.error("Logarithmic scale bounds must be positive.");
     return logMin; 
   }
   if (linearMin === linearMax) return logMin; 
@@ -75,7 +75,6 @@ function logToLinearScale(
   linearMax: number
 ): number {
   if (logValue <= 0 || logMin <= 0 || logMax <= 0) {
-    // console.error("Logarithmic scale values must be positive.");
     return linearMin; 
   }
   
@@ -248,6 +247,10 @@ export default function Home() {
 
   const [panXSliderLimits, setPanXSliderLimits] = useState({ min: -1000, max: 1000 });
   const [panYSliderLimits, setPanYSliderLimits] = useState({ min: -1000, max: 1000 });
+  
+  const [isSliderPanelOpen, setIsSliderPanelOpen] = useState(false);
+  const [isActionButtonsOpen, setIsActionButtonsOpen] = useState(false);
+
 
   const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
     const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
@@ -287,7 +290,7 @@ export default function Home() {
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
-        setActiveInteractionNodeId(null); // Reset any active interaction before re-centering
+        setActiveInteractionNodeId(null); 
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
@@ -357,18 +360,16 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
-      // Empty world: Define a default "content" area centered around world (0,0)
-      // This calculation is now independent of current offsetX/Y to prevent loops
-      const defaultContentWorldWidth = containerWidth / scale;
-      const defaultContentWorldHeight = CONTAINER_HEIGHT_PX / scale;
+      const defaultContentWorldWidth = (containerWidth || 1) / Math.max(scale,0.01);
+      const defaultContentWorldHeight = (CONTAINER_HEIGHT_PX || 1) / Math.max(scale,0.01);
       contentMinXWorld = -defaultContentWorldWidth / 2;
       contentMaxXWorld = defaultContentWorldWidth / 2;
       contentMinYWorld = -defaultContentWorldHeight / 2;
       contentMaxYWorld = defaultContentWorldHeight / 2;
     }
 
-    const paddingXWorld = (containerWidth / 2) / scale; 
-    const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / scale; 
+    const paddingXWorld = (containerWidth / 2) / Math.max(scale, 0.01); 
+    const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / Math.max(scale, 0.01); 
 
     const contentWorldWidth = contentMaxXWorld - contentMinXWorld;
     const contentWorldHeight = contentMaxYWorld - contentMinYWorld;
@@ -416,7 +417,7 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, interactionMode]);
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]);
 
   // Effect to clamp offsetX
   useEffect(() => {
@@ -480,20 +481,8 @@ export default function Home() {
         newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
         
-        let overlapWithExistingAtPending = false;
-        for (const existingNode of currentNodesForCreation) {
-            const existingNodeDimension = getNodeDimension(existingNode);
-            if (newNodeX < existingNode.x + existingNodeDimension &&
-                newNodeX + newNodeDimension > existingNode.x &&
-                newNodeY < existingNode.y + existingNodeDimension &&
-                newNodeY + newNodeDimension > existingNode.y) {
-                overlapWithExistingAtPending = true;
-                break;
-            }
-        }
-        if (!overlapWithExistingAtPending) {
-          placed = true;
-        }
+        // No overlap check if placed by quick press, as user explicitly chose the spot
+        placed = true;
         setPendingNodeCreationCoords(null); 
       }
       
@@ -662,7 +651,6 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    // Reset canvas-global interaction states first
     setInteractionMode('none');
     setPanStartCoords(null);
     setQuickPressStartInfo(null);
@@ -902,8 +890,11 @@ export default function Home() {
                   const updatedNodes = nodes.map(n => {
                       if (n.id === linkingSourceNodeId) {
                           const nodeDim = getNodeDimension(n);
-                          let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
-                          let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
+                          // Use current node position as base, not worldMouseReleasePos + dragOffset
+                          // as dragOffset is relative to original node position.
+                          // For link release to empty space, node moves to pointer.
+                          let newX = worldMouseReleasePos.x - nodeDim / 2;
+                          let newY = worldMouseReleasePos.y - nodeDim / 2;
                           return { ...n, x: newX, y: newY };
                       }
                       return n;
@@ -1213,58 +1204,78 @@ export default function Home() {
 
 
   return (
-    <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
-      <h1 className="text-3xl font-bold tracking-tight mb-6 text-center">Node Weaver</h1>
-
-      <div className="w-full max-w-3xl flex flex-col items-center gap-4 mb-4">
-        <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
-            <Label htmlFor="scale-slider" className="text-sm text-right">Zoom: {isClient ? Math.round(scale * 100) : 100}%</Label>
-            <Slider
-                id="scale-slider"
-                min={LINEAR_SLIDER_MIN}
-                max={LINEAR_SLIDER_MAX}
-                step={1} 
-                value={[linearScaleSliderValue]}
-                onValueChange={(value) => {
-                    const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
-                    setScale(Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)));
-                }}
-                className="col-span-2"
-            />
-        </div>
-        <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
-            <Label htmlFor="offset-x-slider" className="text-sm text-right">Pan X: {isClient ? Math.round(offsetX) : 0}px</Label>
-            <Slider
-                id="offset-x-slider"
-                min={isClient && containerWidth > 0 ? panXSliderLimits.min : -1000}
-                max={isClient && containerWidth > 0 ? panXSliderLimits.max : 1000}
-                step={1}
-                value={[Math.round(offsetX)]}
-                onValueChange={(value) => setOffsetX(value[0])}
-                className="col-span-2"
-                disabled={(isClient && containerWidth > 0 ? (panXSliderLimits.min >= panXSliderLimits.max) : false)}
-            />
-        </div>
-         <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
-            <Label htmlFor="offset-y-slider" className="text-sm text-right">Pan Y: {isClient ? Math.round(offsetY) : 0}px</Label>
-            <Slider
-                id="offset-y-slider"
-                min={isClient && containerWidth > 0 ? panYSliderLimits.min : -1000}
-                max={isClient && containerWidth > 0 ? panYSliderLimits.max : 1000}
-                step={1}
-                value={[Math.round(offsetY)]}
-                onValueChange={(value) => setOffsetY(value[0])}
-                className="col-span-2"
-                disabled={(isClient && containerWidth > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
-            />
-        </div>
-      </div>
+    <main className="flex flex-col items-center justify-start min-h-screen p-4 bg-background text-foreground overflow-hidden"> {/* Added overflow-hidden to main */}
+      <h1 className="text-3xl font-bold tracking-tight my-4 text-center">Node Weaver</h1>
 
       <div
         ref={containerRef}
-        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden"
+        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden" // Ensure touch-none and overflow-hidden here
         style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
       >
+        {/* Slider Panel Trigger */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute top-2 left-2 z-50 bg-card/80 backdrop-blur-sm text-foreground hover:bg-accent hover:text-accent-foreground"
+          onClick={() => setIsSliderPanelOpen(!isSliderPanelOpen)}
+          aria-label={isSliderPanelOpen ? "Close controls panel" : "Open controls panel"}
+        >
+          {isSliderPanelOpen ? <XIcon className="h-5 w-5" /> : <Settings className="h-5 w-5" />}
+        </Button>
+
+        {/* Slider Panel */}
+        <div
+          className={cn(
+            "absolute top-0 left-0 right-0 z-40 bg-card/90 backdrop-blur-md p-4 pt-14 space-y-3 rounded-b-lg shadow-lg transition-all duration-300 ease-in-out",
+            isSliderPanelOpen ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0 pointer-events-none"
+          )}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <div className="w-full grid grid-cols-4 gap-2 items-center px-1">
+              <Label htmlFor="scale-slider" className="text-sm text-right col-span-1">Zoom: {isClient ? Math.round(scale * 100) : 100}%</Label>
+              <Slider
+                  id="scale-slider"
+                  min={LINEAR_SLIDER_MIN}
+                  max={LINEAR_SLIDER_MAX}
+                  step={1} 
+                  value={[Math.round(linearScaleSliderValue)]}
+                  onValueChange={(value) => {
+                      const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
+                      setScale(Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)));
+                  }}
+                  className="col-span-3"
+              />
+          </div>
+          <div className="w-full grid grid-cols-4 gap-2 items-center px-1">
+              <Label htmlFor="offset-x-slider" className="text-sm text-right col-span-1">Pan X: {isClient ? Math.round(offsetX) : 0}</Label>
+              <Slider
+                  id="offset-x-slider"
+                  min={isClient && containerWidth > 0 ? Math.round(panXSliderLimits.min) : -1000}
+                  max={isClient && containerWidth > 0 ? Math.round(panXSliderLimits.max) : 1000}
+                  step={1}
+                  value={[Math.round(offsetX)]}
+                  onValueChange={(value) => setOffsetX(value[0])}
+                  className="col-span-3"
+                  disabled={(isClient && containerWidth > 0 ? (panXSliderLimits.min >= panXSliderLimits.max) : false)}
+              />
+          </div>
+           <div className="w-full grid grid-cols-4 gap-2 items-center px-1">
+              <Label htmlFor="offset-y-slider" className="text-sm text-right col-span-1">Pan Y: {isClient ? Math.round(offsetY) : 0}</Label>
+              <Slider
+                  id="offset-y-slider"
+                  min={isClient && containerWidth > 0 ? Math.round(panYSliderLimits.min) : -1000}
+                  max={isClient && containerWidth > 0 ? Math.round(panYSliderLimits.max) : 1000}
+                  step={1}
+                  value={[Math.round(offsetY)]}
+                  onValueChange={(value) => setOffsetY(value[0])}
+                  className="col-span-3"
+                  disabled={(isClient && containerWidth > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
+              />
+          </div>
+        </div>
+
+
         <svg
           className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
           aria-hidden="true"
@@ -1364,7 +1375,7 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease', 
+              transition: 'box-shadow 0.2s ease, transform 0.2s ease', 
               userSelect: 'none', 
               border: '1px solid hsl(var(--border))' 
             };
@@ -1415,7 +1426,70 @@ export default function Home() {
             );
           })}
         </div>
-      </div>
+
+        {/* Action Buttons Trigger */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="absolute bottom-2 right-2 z-50 bg-card/80 backdrop-blur-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded-full w-12 h-12 shadow-lg"
+          onClick={() => setIsActionButtonsOpen(!isActionButtonsOpen)}
+          aria-label={isActionButtonsOpen ? "Close actions menu" : "Open actions menu"}
+        >
+          {isActionButtonsOpen ? <XIcon className="h-6 w-6" /> : <Rows3 className="h-6 w-6" />}
+        </Button>
+
+        {/* Action Buttons Panel */}
+        <div
+          className={cn(
+            "absolute bottom-16 right-2 z-40 flex flex-col items-end space-y-2 transition-all duration-300 ease-in-out",
+            isActionButtonsOpen ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
+          )}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          <Dialog 
+            open={isCreateNodeDialogOpen} 
+            onOpenChange={(isOpen) => {
+              setIsCreateNodeDialogOpen(isOpen);
+              if (!isOpen) {
+                setActiveInteractionNodeId(null);
+                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); 
+              }
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg w-full justify-start px-4 py-2">
+                <Plus className="mr-2 h-5 w-5" />
+                Create Node
+              </Button>
+            </DialogTrigger>
+            {/* DialogContent for Create Node remains unchanged */}
+          </Dialog>
+          <Button onClick={loadInitialData} variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
+              <Download className="mr-2 h-5 w-5 transform rotate-180" /> 
+              Load Data
+          </Button>
+           <Button asChild variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
+            <a href="/api/download-all-data" download="node_weaver_data.json">
+              <Download className="mr-2 h-5 w-5" />
+              Download Data
+            </a>
+          </Button>
+          <Button onClick={() => fileInputRef.current?.click()} variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
+            <Upload className="mr-2 h-5 w-5" />
+            Upload Data
+          </Button>
+        </div>
+         <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".json"
+            className="hidden"
+          />
+
+      </div> {/* End of containerRef */}
+
 
       {showSearchBar && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-50 p-1 bg-background/80 backdrop-blur-sm rounded-lg shadow-2xl border border-border">
@@ -1444,89 +1518,57 @@ export default function Home() {
         </div>
       )}
       
-      <div className="mt-8 flex flex-col items-center gap-4">
-        <div className="flex gap-4">
-          <Dialog 
-            open={isCreateNodeDialogOpen} 
-            onOpenChange={(isOpen) => {
-              setIsCreateNodeDialogOpen(isOpen);
-              if (!isOpen) {
-                setActiveInteractionNodeId(null);
-                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); 
-              }
-            }}
-          >
-            <DialogTrigger asChild>
-              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
-                <Plus className="mr-2 h-5 w-5" />
-                Create New Node
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
-              <DialogHeader>
-                <DialogTitle className="text-2xl">Add New Node</DialogTitle>
-                <DialogDescription>Define attributes for the new node. Click create when you're done.</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-6 py-6">
-                <div className="grid gap-3">
-                  <Label htmlFor="create-node-name" className="text-md">Name</Label>
-                  <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
-                </div>
-                <div className="grid gap-3">
-                    <Label className="text-md">Type</Label>
-                    <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
-                    </RadioGroup>
-                </div>
-                {newNodeType === 'entity' && (
-                  <div className="grid gap-3">
-                    <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
-                    <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
-                  </div>
-                )}
-                <div className="grid gap-3">
-                  <Label htmlFor="create-node-description" className="text-md">Description</Label>
-                  <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
-                </div>
-                <div className="grid gap-3">
-                  <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
-                  <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
-                </div>
+      {/* Moved Dialogs outside of the button panel for cleaner structure and to avoid nesting issues */}
+      {/* Create Node Dialog */}
+      <Dialog 
+        open={isCreateNodeDialogOpen} 
+        onOpenChange={(isOpen) => {
+          setIsCreateNodeDialogOpen(isOpen);
+          if (!isOpen) {
+            setActiveInteractionNodeId(null);
+            if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); 
+          }
+        }}
+      >
+        {/* <DialogTrigger /> is now part of the action buttons panel */}
+        <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
+          <DialogHeader>
+            <DialogTitle className="text-2xl">Add New Node</DialogTitle>
+            <DialogDescription>Define attributes for the new node. Click create when you're done.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-6 py-6">
+            <div className="grid gap-3">
+              <Label htmlFor="create-node-name" className="text-md">Name</Label>
+              <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
+            </div>
+            <div className="grid gap-3">
+                <Label className="text-md">Type</Label>
+                <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
+                </RadioGroup>
+            </div>
+            {newNodeType === 'entity' && (
+              <div className="grid gap-3">
+                <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
+                <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
               </div>
-              <DialogFooter>
-                <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-                <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Button onClick={loadInitialData} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
-              <Download className="mr-2 h-5 w-5 transform rotate-180" /> 
-              Load Data
-          </Button>
-        </div>
-        <div className="flex gap-4">
-          <Button asChild variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
-            <a href="/api/download-all-data" download="node_weaver_data.json">
-              <Download className="mr-2 h-5 w-5" />
-              Download Data
-            </a>
-          </Button>
-          <Button onClick={() => fileInputRef.current?.click()} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
-            <Upload className="mr-2 h-5 w-5" />
-            Upload Data
-          </Button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            accept=".json"
-            className="hidden"
-          />
-        </div>
-      </div>
-
+            )}
+            <div className="grid gap-3">
+              <Label htmlFor="create-node-description" className="text-md">Description</Label>
+              <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
+            </div>
+            <div className="grid gap-3">
+              <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
+              <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
+            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {editingNode && (
         <Dialog open={isEditNodeDialogOpen} onOpenChange={(isOpen) => {
@@ -1658,3 +1700,4 @@ export default function Home() {
   );
 }
 
+    
