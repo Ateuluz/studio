@@ -18,7 +18,8 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3 } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3, Search } from "lucide-react";
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 import { cn } from "@/lib/utils";
@@ -26,7 +27,6 @@ import { cn } from "@/lib/utils";
 
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
-// const CONTAINER_HEIGHT_PX = 700; // Replaced by containerHeight state
 
 const PRESS_HOLD_THRESHOLD = 700; // ms
 const DRAG_MOVE_THRESHOLD = 5; // pixels 
@@ -57,7 +57,6 @@ function linearToLogScale(
   logMax: number
 ): number {
   if (logMin <= 0 || logMax <= 0) {
-    // console.warn("Logarithmic scale min/max must be positive.");
     return logMin; 
   }
   if (linearMin === linearMax) return logMin; 
@@ -76,7 +75,6 @@ function logToLinearScale(
   linearMax: number
 ): number {
   if (logValue <= 0 || logMin <= 0 || logMax <= 0) {
-    // console.warn("Logarithmic values for conversion must be positive.");
     return linearMin; 
   }
   
@@ -239,9 +237,6 @@ export default function Home() {
   const [quickPressStartInfo, setQuickPressStartInfo] = useState<{ screenX: number, screenY: number, worldX: number, worldY: number, time: number } | null>(null);
   const [pinchStartData, setPinchStartData] = useState<PinchStartData | null>(null);
 
-
-  const [showSearchBar, setShowSearchBar] = useState(false);
-
   const [scale, setScale] = useState(1);
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
@@ -251,6 +246,10 @@ export default function Home() {
   
   const [isSliderPanelOpen, setIsSliderPanelOpen] = useState(false);
   const [isActionButtonsOpen, setIsActionButtonsOpen] = useState(false);
+
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Node[]>([]);
 
 
   const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
@@ -304,7 +303,7 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
+            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; // Re-find the main node after adjustment
             await saveNodesToFileCallback(nodesToSet); 
         }
         
@@ -323,24 +322,25 @@ export default function Home() {
 
   useEffect(() => {
     if (containerRef.current) {
-      setContainerWidth(containerRef.current.getBoundingClientRect().width);
-      setContainerHeight(containerRef.current.getBoundingClientRect().height);
+      const rect = containerRef.current.getBoundingClientRect();
+      setContainerWidth(rect.width);
+      setContainerHeight(rect.height);
+       if (rect.height > 0 && !initialLoadAndCenteringComplete) { // Trigger initial load if height is available
+         loadInitialData();
+       }
     }
     const handleResize = () => {
       if (containerRef.current) {
-        setContainerWidth(containerRef.current.getBoundingClientRect().width);
-        setContainerHeight(containerRef.current.getBoundingClientRect().height);
+        const rect = containerRef.current.getBoundingClientRect();
+        setContainerWidth(rect.width);
+        setContainerHeight(rect.height);
       }
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [loadInitialData, initialLoadAndCenteringComplete]); // Added loadInitialData and initialLoadAndCenteringComplete
 
-  useEffect(() => {
-    if (containerHeight > 0) { // Ensure dimensions are set before initial load
-        loadInitialData();
-    }
-  }, [loadInitialData, containerHeight]);
+  // Removed the separate useEffect for loadInitialData based on containerHeight
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -506,7 +506,7 @@ export default function Home() {
               newNodeX < existingNode.x + existingNodeDimension &&
               newNodeX + newNodeDimension > existingNode.x &&
               newNodeY < existingNode.y + existingNodeDimension &&
-              newNodeY + newNodeDimension > existingNode.y
+              newNodeY + existingNodeDimension > existingNode.y
             ) {
               overlap = true;
               break;
@@ -653,11 +653,11 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
+    // Reset canvas-global interaction states
     setInteractionMode('none');
     setPanStartCoords(null);
     setQuickPressStartInfo(null);
     setPinchStartData(null);
-
 
     if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); 
 
@@ -678,7 +678,7 @@ export default function Home() {
 
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
     const timer = setTimeout(() => {
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
+      if (activeInteractionNodeId === node.id && !isDraggingForReposition) { 
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
       }
@@ -716,6 +716,7 @@ export default function Home() {
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
+            // Give pinch-zoom precedence: clear any active node interaction
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
@@ -851,7 +852,7 @@ export default function Home() {
 
         const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
         if (!point || !containerRef.current) {
-          if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
+          if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen ) setActiveInteractionNodeId(null);
           setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
           setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
           return;
@@ -919,13 +920,13 @@ export default function Home() {
           }
           await saveNodesToFileCallback(nodes); 
         } else if (isLinkingModeActive) { 
-          setShowSearchBar(true);
-        } else if (!isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
+          // Press-hold without drag - was showSearchBar, now no-op or can be something else
+        } else if (!isDraggingForReposition && !isLinkingModeActive) { 
           const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
           if (nodeToEdit) openEditNodeDialog(nodeToEdit);
         }
 
-        if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !showSearchBar) {
+        if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) {
           setActiveInteractionNodeId(null);
         }
         setInteractionStartPos(null);
@@ -991,7 +992,7 @@ export default function Home() {
     };
   }, [
       activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, 
-      isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, 
+      isDraggingForReposition, openEditNodeDialog, isLinkingModeActive, 
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
       scale, offsetX, offsetY, saveNodesToFileCallback, saveEdgesToFileCallback,
@@ -1000,7 +1001,7 @@ export default function Home() {
       setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
-      setShowSearchBar, setIsCreateNodeDialogOpen, setPendingNodeCreationCoords 
+      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords 
   ]);
 
 
@@ -1201,6 +1202,40 @@ export default function Home() {
 
   const linearScaleSliderValue = isClient ? Math.round(logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)) : Math.round(logToLinearScale(1, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX));
 
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    const lowerCaseQuery = searchQuery.toLowerCase();
+    const nameMatches: Node[] = [];
+    const tagMatches: Node[] = [];
+
+    nodes.forEach(node => {
+      if (node.name.toLowerCase().includes(lowerCaseQuery)) {
+        nameMatches.push(node);
+      } else if (node.tags.some(tag => tag.toLowerCase().includes(lowerCaseQuery))) {
+        tagMatches.push(node);
+      }
+    });
+
+    setSearchResults([...nameMatches, ...tagMatches]);
+  }, [searchQuery, nodes]);
+
+  const handleSearchResultClick = (node: Node) => {
+    setIsSearchDialogOpen(false);
+    setSearchQuery(""); // Clear search query
+    
+    const nodeDimension = getNodeDimension(node.type);
+    const targetOffsetX = (containerWidth / 2) - (node.x + nodeDimension / 2) * scale;
+    const targetOffsetY = (containerHeight / 2) - (node.y + nodeDimension / 2) * scale;
+
+    setOffsetX(Math.round(targetOffsetX));
+    setOffsetY(Math.round(targetOffsetY));
+    // Optionally, set a default scale:
+    // setScale(1); 
+  };
 
   return (
     <main className="flex flex-col items-center h-screen bg-background text-foreground overflow-hidden"> 
@@ -1273,7 +1308,6 @@ export default function Home() {
               />
           </div>
         </div>
-
 
         <svg
           className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
@@ -1464,6 +1498,20 @@ export default function Home() {
               </Button>
             </DialogTrigger>
           </Dialog>
+           <Dialog 
+            open={isSearchDialogOpen} 
+            onOpenChange={(isOpen) => {
+              setIsSearchDialogOpen(isOpen);
+              if (!isOpen) { setSearchQuery(""); setSearchResults([]); } // Clear search on close
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
+                <Search className="mr-2 h-5 w-5" />
+                Search Nodes
+              </Button>
+            </DialogTrigger>
+          </Dialog>
           <Button onClick={loadInitialData} variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
               <Download className="mr-2 h-5 w-5 transform rotate-180" /> 
               Load Data
@@ -1486,36 +1534,7 @@ export default function Home() {
             accept=".json"
             className="hidden"
           />
-
       </div> 
-
-
-      {showSearchBar && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-50 p-1 bg-background/80 backdrop-blur-sm rounded-lg shadow-2xl border border-border">
-          <div className="relative p-3">
-            <Input
-              placeholder="Search nodes or type to connect..."
-              className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
-              onFocus={() => { 
-                if(pressHoldTimer) clearTimeout(pressHoldTimer);
-                if(activeInteractionNodeId) setActiveInteractionNodeId(null); 
-              }}
-            />
-            <Button
-              onClick={() => {
-                setShowSearchBar(false);
-                setActiveInteractionNodeId(null); 
-              }}
-              variant="ghost"
-              size="sm"
-              className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground hover:text-foreground h-8 w-8 p-0"
-              aria-label="Close search bar"
-            >
-              <Plus className="h-5 w-5 rotate-45" /> 
-            </Button>
-          </div>
-        </div>
-      )}
       
       <Dialog 
         open={isCreateNodeDialogOpen} 
@@ -1692,8 +1711,53 @@ export default function Home() {
           </DialogContent>
         </Dialog>
       )}
+       <Dialog 
+            open={isSearchDialogOpen} 
+            onOpenChange={(isOpen) => {
+              setIsSearchDialogOpen(isOpen);
+              if (!isOpen) { setSearchQuery(""); setSearchResults([]); }
+            }}
+          >
+          <DialogContent className="sm:max-w-md bg-background text-foreground border-border shadow-2xl rounded-lg">
+            <DialogHeader>
+              <DialogTitle className="text-2xl">Search Nodes</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <Input
+                placeholder="Search by name or tag..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="text-md p-3"
+              />
+            </div>
+            {searchResults.length > 0 && (
+              <ScrollArea className="h-[200px] w-full rounded-md border p-2">
+                {searchResults.map(node => (
+                  <div
+                    key={node.id}
+                    onClick={() => handleSearchResultClick(node)}
+                    className="p-2 hover:bg-accent rounded-md cursor-pointer"
+                  >
+                    <p className="font-medium">{node.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {node.tags.join(', ') || "No tags"}
+                    </p>
+                  </div>
+                ))}
+              </ScrollArea>
+            )}
+            {searchQuery.trim() && searchResults.length === 0 && (
+              <p className="text-muted-foreground text-center py-4">No nodes found.</p>
+            )}
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button variant="outline" className="text-md px-5 py-2.5">Close</Button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
     </main>
   );
 }
-
     
