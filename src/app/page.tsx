@@ -19,32 +19,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { Plus, Link2, Trash2, Download } from "lucide-react";
+import type { Node, Edge, EdgeTag } from "@/lib/types";
+import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 
-const NODES_KEY = 'nodeWeaverNodes';
-const EDGES_KEY = 'nodeWeaverEdges';
-
-interface Node {
-  id: string;
-  name: string;
-  description: string;
-  tags: string[];
-  x: number;
-  y: number;
-  type: 'category' | 'entity';
-  birthday?: string;
-}
-
-interface EdgeTag {
-  name: string;
-  date?: string;
-}
-
-interface Edge {
-  id:string;
-  sourceNodeId: string;
-  targetNodeId: string;
-  tags: EdgeTag[];
-}
 
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
@@ -60,7 +37,6 @@ const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50; 
 
-// Helper function to determine grid line separation in WORLD units based on scale
 function getGridLineWorldSeparation(scale: number): number {
   if (scale < 0.4) return BASE_GRID_SIZE * 4;
   if (scale < 0.8) return BASE_GRID_SIZE * 2;
@@ -68,11 +44,10 @@ function getGridLineWorldSeparation(scale: number): number {
 }
 
 interface ScreenGridData {
-  verticalLines: number[]; // X-coordinates in screen space
-  horizontalLines: number[]; // Y-coordinates in screen space
+  verticalLines: number[]; 
+  horizontalLines: number[];
 }
 
-// Helper function to calculate SCREEN coordinates for grid lines
 function calculateScreenGridLinePositions(
   offsetX: number, 
   offsetY: number, 
@@ -94,19 +69,15 @@ function calculateScreenGridLinePositions(
   const verticalLines: number[] = [];
   const horizontalLines: number[] = [];
 
-  // Calculate the world coordinates of the top-left of the viewport
   const worldViewTopLeftX = -offsetX / scale;
   const worldViewTopLeftY = -offsetY / scale;
 
-  // Calculate the first multiple of worldSeparation that is >= worldViewTopLeftX
   const firstVerticalWorldLine_k = Math.floor(worldViewTopLeftX / worldSeparation);
-  // Calculate the last multiple of worldSeparation that is <= worldViewTopLeftX + (containerWidth / scale)
   const lastVerticalWorldLine_k = Math.ceil((worldViewTopLeftX + containerWidth / scale) / worldSeparation);
 
   for (let k = firstVerticalWorldLine_k; k <= lastVerticalWorldLine_k; k++) {
     const worldX = k * worldSeparation;
-    const screenX = worldX * scale + offsetX; // Convert world X to screen X
-    // Add line if it's within or near the viewport (add a buffer for lines just outside)
+    const screenX = worldX * scale + offsetX; 
     if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) {
       verticalLines.push(screenX);
     }
@@ -117,7 +88,7 @@ function calculateScreenGridLinePositions(
   
   for (let k = firstHorizontalWorldLine_k; k <= lastHorizontalWorldLine_k; k++) {
     const worldY = k * worldSeparation;
-    const screenY = worldY * scale + offsetY; // Convert world Y to screen Y
+    const screenY = worldY * scale + offsetY; 
     if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) {
       horizontalLines.push(screenY);
     }
@@ -130,16 +101,16 @@ function calculateScreenGridLinePositions(
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
   const tagEntries = tagsInput.split(',').map(entry => entry.trim());
-  const regex = /^(.*?)(?:\s*\((....-..-..)\))?$/; // Regex to capture tag name and optional date
+  const regex = /^(.*?)(?:\s*\((....-..-..)\))?$/; 
   return tagEntries.map(entry => {
     const match = entry.match(regex);
     if (match) {
       const name = match[1].trim();
-      const date = match[2]; // Date part
+      const date = match[2]; 
       return { name, date: date || undefined };
     }
-    return { name: entry.trim() }; // If no date, just the name
-  }).filter(tag => tag.name); // Ensure tag name is not empty
+    return { name: entry.trim() }; 
+  }).filter(tag => tag.name); 
 }
 
 function formatTagsWithDates(tags: EdgeTag[]): string {
@@ -157,7 +128,7 @@ export default function Home() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformedContentRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0); // Default width
+  const [containerWidth, setContainerWidth] = useState(0); 
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -205,52 +176,21 @@ export default function Home() {
     const type = typeof nodeOrType === 'string' ? nodeOrType : nodeOrType.type;
     return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
   }, []);
-
-  const saveNodesToLocalStorage = useCallback((currentNodes: Node[]) => {
-    try {
-      localStorage.setItem(NODES_KEY, JSON.stringify(currentNodes));
-    } catch (error) {
-      console.error("Failed to save nodes:", error);
-    }
-  }, []);
-
-  const saveEdgesToLocalStorage = useCallback((currentEdges: Edge[]) => {
-    try {
-      localStorage.setItem(EDGES_KEY, JSON.stringify(currentEdges));
-    } catch (error) {
-      console.error("Failed to save edges:", error);
-    }
-  }, []);
   
- const loadDataFromLocalStorage = useCallback(() => {
+  const loadInitialData = useCallback(async () => {
     if (typeof window === 'undefined') return; 
 
     let loadedNodes: Node[] = [];
     let loadedEdges: Edge[] = [];
 
     try {
-      const storedNodesString = localStorage.getItem(NODES_KEY);
-      if (storedNodesString) {
-        try {
-          loadedNodes = JSON.parse(storedNodesString) as Node[];
-        } catch (e) {
-          console.error("Error parsing nodes from localStorage:", e);
-          loadedNodes = []; 
-        }
-      }
-
-      const storedEdgesString = localStorage.getItem(EDGES_KEY);
-      if (storedEdgesString) {
-        try {
-          loadedEdges = JSON.parse(storedEdgesString) as Edge[];
-        } catch (e) {
-          console.error("Error parsing edges from localStorage:", e);
-          loadedEdges = []; 
-        }
-      }
+      loadedNodes = await loadNodesFromFile();
+      loadedEdges = await loadEdgesFromFile();
     } catch (error) {
-      console.error("Failed to load data from localStorage during general operation:", error);
+      console.error("Failed to load data from server actions:", error);
     }
+
+    let nodesToSet = loadedNodes;
 
     if (loadedNodes.length > 0) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
@@ -258,35 +198,27 @@ export default function Home() {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
 
-        let adjustedNodes = loadedNodes;
-        // Only adjust and re-save if there's an actual shift needed
         if (Math.abs(deltaX) > 0.01 || Math.abs(deltaY) > 0.01) { 
-          adjustedNodes = loadedNodes.map(node => ({
+          const adjustedNodes = loadedNodes.map(node => ({
             ...node,
             x: node.x + deltaX,
             y: node.y + deltaY,
           }));
-          setNodes(adjustedNodes);
-          saveNodesToLocalStorage(adjustedNodes); 
-        } else {
-          setNodes(loadedNodes);
+          nodesToSet = adjustedNodes;
+          await saveNodesToFile(adjustedNodes); 
         }
         
-        // Use the potentially adjusted mainNode for centering calculations
-        const mainNodeAfterAdjustment = adjustedNodes.find(n => n.id === mainNode.id) || mainNode;
+        const mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
         setOffsetX((containerWidth / 2) - (mainNodeDimension / 2) * scale);
         setOffsetY((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale);
-      } else {
-        setNodes(loadedNodes);
       }
-    } else {
-      setNodes([]); 
     }
+    setNodes(nodesToSet);
     setEdges(loadedEdges);
 
-  }, [containerWidth, saveNodesToLocalStorage, getNodeDimension, scale, setNodes, setEdges, setOffsetX, setOffsetY]);
+  }, [containerWidth, getNodeDimension, scale]);
 
 
   useEffect(() => {
@@ -303,8 +235,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    loadDataFromLocalStorage();
-  }, [loadDataFromLocalStorage]); // Ensure loadDataFromLocalStorage is stable or its dependencies are listed
+    async function fetchData() {
+      await loadInitialData();
+    }
+    fetchData();
+  }, [loadInitialData]);
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -316,7 +251,7 @@ export default function Home() {
   }, [offsetX, offsetY, scale]);
 
  useEffect(() => {
-    if (activeInteractionNodeId) return; // Don't adjust pan limits while user is interacting
+    if (activeInteractionNodeId) return; 
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
     const nodesToConsider = nodes;
@@ -400,7 +335,7 @@ export default function Home() {
   }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
 
 
-  const createNode = () => {
+  const createNode = async () => {
     if (newNodeName && containerWidth > 0 && scale !== 0) {
       
       let currentNodesForCreation = [...nodes];
@@ -466,7 +401,7 @@ export default function Home() {
       
       const updatedNodes = [...currentNodesForCreation, newNodeToAdd];
       setNodes(updatedNodes);
-      saveNodesToLocalStorage(updatedNodes);
+      await saveNodesToFile(updatedNodes);
 
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
@@ -483,7 +418,7 @@ export default function Home() {
     setActiveInteractionNodeId(null); 
   }, []);
 
-  const saveNodeChanges = () => {
+  const saveNodeChanges = async () => {
     if (editingNode && editNodeName) {
       const tagsArray = editNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
       
@@ -504,23 +439,23 @@ export default function Home() {
       }
       
       setNodes(provisionallyUpdatedNodes);
-      saveNodesToLocalStorage(provisionallyUpdatedNodes);
+      await saveNodesToFile(provisionallyUpdatedNodes);
       setEditingNode(null);
       setIsEditNodeDialogOpen(false);
     }
   };
 
-  const deleteNode = () => {
+  const deleteNode = async () => {
     if (!editingNode) return;
 
     const nodeIdToDelete = editingNode.id;
     const updatedNodes = nodes.filter(node => node.id !== nodeIdToDelete);
     setNodes(updatedNodes);
-    saveNodesToLocalStorage(updatedNodes);
+    await saveNodesToFile(updatedNodes);
 
     const updatedEdges = edges.filter(edge => edge.sourceNodeId !== nodeIdToDelete && edge.targetNodeId !== nodeIdToDelete);
     setEdges(updatedEdges);
-    saveEdgesToLocalStorage(updatedEdges);
+    await saveEdgesToFile(updatedEdges);
     
     setEditingNode(null);
     setIsEditNodeDialogOpen(false);
@@ -535,7 +470,7 @@ export default function Home() {
     );
   }, [edges]);
 
-  const createEdge = () => {
+  const createEdge = async () => {
     if (newEdgeDataSourceNodeId && newEdgeDataTargetNodeId) {
       const parsedTags = parseTagsWithDates(newEdgeTagsInput);
       const newEdgeToAdd: Edge = {
@@ -546,7 +481,7 @@ export default function Home() {
       };
       const updatedEdges = [...edges, newEdgeToAdd];
       setEdges(updatedEdges);
-      saveEdgesToLocalStorage(updatedEdges);
+      await saveEdgesToFile(updatedEdges);
 
       setIsCreateEdgeDialogOpen(false);
       setNewEdgeDataSourceNodeId(null);
@@ -555,25 +490,25 @@ export default function Home() {
     }
   };
 
-  const saveEdgeChanges = () => {
+  const saveEdgeChanges = async () => {
     if (editingEdge) {
       const updatedTags = parseTagsWithDates(editEdgeTagsInput);
       const updatedEdges = edges.map(edge =>
         edge.id === editingEdge.id ? { ...edge, tags: updatedTags } : edge
       );
       setEdges(updatedEdges);
-      saveEdgesToLocalStorage(updatedEdges);
+      await saveEdgesToFile(updatedEdges);
 
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
     }
   };
 
-  const deleteEdge = () => {
+  const deleteEdge = async () => {
     if (editingEdge) {
       const updatedEdges = edges.filter(edge => edge.id !== editingEdge.id);
       setEdges(updatedEdges);
-      saveEdgesToLocalStorage(updatedEdges);
+      await saveEdgesToFile(updatedEdges);
 
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
@@ -657,7 +592,7 @@ export default function Home() {
       }
     };
 
-    const handleInteractionEnd = (event: MouseEvent | TouchEvent) => {
+    const handleInteractionEnd = async (event: MouseEvent | TouchEvent) => {
       if (pressHoldTimer) {
         clearTimeout(pressHoldTimer);
         setPressHoldTimer(null);
@@ -675,7 +610,7 @@ export default function Home() {
       let targetNodeUnderneath: Node | null = null;
 
       for (const node of nodes) {
-        if (node.id === activeInteractionNodeId) { // Skip the node being dragged/interacted with
+        if (node.id === activeInteractionNodeId) { 
           continue;
         }
 
@@ -716,7 +651,7 @@ export default function Home() {
                     return n;
                 });
                 setNodes(updatedNodes);
-                saveNodesToLocalStorage(updatedNodes); 
+                await saveNodesToFile(updatedNodes); 
             }
         }
       } else if (isDraggingForReposition && activeInteractionNodeId) { 
@@ -734,7 +669,7 @@ export default function Home() {
                 setIsCreateEdgeDialogOpen(true);
             }
         }
-        saveNodesToLocalStorage(nodes); 
+        await saveNodesToFile(nodes); 
 
       } else if (isLinkingModeActive && activeInteractionNodeId) { 
         setShowSearchBar(true);
@@ -771,7 +706,7 @@ export default function Home() {
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY, saveNodesToLocalStorage, saveEdgesToLocalStorage]);
+  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
@@ -854,13 +789,13 @@ export default function Home() {
     } else { changed = true; } 
 
     if (changed) {
-      const timeoutId = setTimeout(() => {
+      const timeoutId = setTimeout(async () => {
         setNodes(repulsedNodes);
-        saveNodesToLocalStorage(repulsedNodes);
+        await saveNodesToFile(repulsedNodes);
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToLocalStorage]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); 
 
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; 
@@ -878,18 +813,18 @@ export default function Home() {
     }
 
     if (changed) {
-      const timeoutId = setTimeout(() => {
+      const timeoutId = setTimeout(async () => {
         const finalUpdatedNodes = nodes.map(cn => {
             if (cn.id === activeInteractionNodeId) return cn; 
             const rn = repulsedNodes.find(r => r.id === cn.id);
             return rn || cn; 
         });
         setNodes(finalUpdatedNodes);
-        saveNodesToLocalStorage(finalUpdatedNodes);
+        await saveNodesToFile(finalUpdatedNodes);
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToLocalStorage]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -999,7 +934,7 @@ export default function Home() {
         >
           <svg
             className="absolute top-0 left-0 w-full h-full pointer-events-none"
-            overflow="visible" // Allow lines to draw outside initial bounds if nodes are far apart
+            overflow="visible" 
           >
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
@@ -1184,9 +1119,15 @@ export default function Home() {
           </DialogContent>
         </Dialog>
 
-        <Button onClick={loadDataFromLocalStorage} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
+        <Button onClick={loadInitialData} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
             <Download className="mr-2 h-5 w-5" />
             Load Data
+        </Button>
+        <Button asChild variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
+          <a href="/api/download-all-data" download="node_weaver_data.json">
+            <Download className="mr-2 h-5 w-5" />
+            Download Data
+          </a>
         </Button>
       </div>
 
