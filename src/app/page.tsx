@@ -28,7 +28,7 @@ const ENTITY_NODE_DIMENSION = 128;
 const CONTAINER_HEIGHT_PX = 500; 
 
 const PRESS_HOLD_THRESHOLD = 700; // ms
-const DRAG_MOVE_THRESHOLD = 10; // pixels
+const DRAG_MOVE_THRESHOLD = 5; // pixels - Changed from 10 to 5
 const QUICK_PRESS_DURATION_THRESHOLD = 250; // ms
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
@@ -207,21 +207,21 @@ export default function Home() {
       loadedEdges = await loadEdgesFromFile();
     } catch (error) {
       console.error("Failed to load data from server actions:", error);
-      alert("Error loading data. Check console for details.");
+      // Consider showing a user-friendly error message here
     }
 
     let nodesToSet = loadedNodes;
 
     if (loadedNodes.length > 0) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
-      if (mainNode && containerWidth > 0 && (mainNode.x !==0 || mainNode.y !==0) ) {
+      if (mainNode && containerWidth > 0 ) { // Removed mainNode.x/y check, always center if "Main" exists
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
         let mainNodeAfterAdjustment = mainNode;
 
         // Only adjust if the main node is not already at (0,0) to avoid unnecessary writes
-        if (Math.abs(deltaX) > 0.01 || Math.abs(deltaY) > 0.01) { 
+        if (Math.abs(deltaX) > 0.0001 || Math.abs(deltaY) > 0.0001) { 
             const adjustedNodes = loadedNodes.map(node => ({
                 ...node,
                 x: node.x + deltaX,
@@ -259,7 +259,7 @@ export default function Home() {
 
   useEffect(() => {
     loadInitialData();
-  }, [loadInitialData]);
+  }, [loadInitialData]); // containerWidth is already a dep of loadInitialData
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -342,7 +342,6 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-    // These clamping effects are now separate
   }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
 
   // Effect to clamp offsetX
@@ -371,7 +370,7 @@ export default function Home() {
 
       if (tagsArray.includes("Main")) {
         currentNodesForCreation = currentNodesForCreation.map(n => {
-          if (n.id !== editingNode?.id && n.tags.includes("Main")) { // ensure not removing from self if editing
+          if (n.id !== editingNode?.id && n.tags.includes("Main")) { 
             return { ...n, tags: n.tags.filter(t => t !== "Main") };
           }
           return n;
@@ -384,9 +383,9 @@ export default function Home() {
       const newNodeDimension = getNodeDimension(newNodeType);
 
       if (pendingNodeCreationCoords) {
-        newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; // Center node on click point
+        newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
-        // Overlap check for pending coords (optional, could be removed if exact placement is desired)
+        
         let overlap = false;
         for (const existingNode of currentNodesForCreation) {
             const existingNodeDimension = getNodeDimension(existingNode);
@@ -401,8 +400,7 @@ export default function Home() {
         if (!overlap) {
             placed = true;
         }
-        // If overlap, fall through to random placement logic OR place anyway (current behavior falls through)
-        setPendingNodeCreationCoords(null); // Clear after use
+        setPendingNodeCreationCoords(null); 
       }
       
       if (!placed) {
@@ -599,9 +597,8 @@ export default function Home() {
     setPressHoldTimer(timer);
   };
 
-  // Canvas interaction handlers
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
-    if (event.target !== containerRef.current) return; // Only interact if click is on the canvas itself
+    if (event.target !== containerRef.current) return; 
 
     const point = 'touches' in event ? event.touches[0] : event;
     const screenCoords = { x: point.clientX, y: point.clientY };
@@ -796,15 +793,17 @@ export default function Home() {
       setPanStartCoords(null);
     };
 
+    if (currentContainerRef) {
+      currentContainerRef.addEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
+      currentContainerRef.addEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener, { passive: false });
+    }
+
     // Add global listeners if any interaction is active
     if (activeInteractionNodeId || interactionMode !== 'none') {
       window.addEventListener('mousemove', handleMove);
       window.addEventListener('mouseup', handleEnd);
       window.addEventListener('touchmove', handleMove, { passive: false });
       window.addEventListener('touchend', handleEnd);
-    } else if (currentContainerRef) { // Only add canvas-specific listeners if no global interaction
-      currentContainerRef.addEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
-      currentContainerRef.addEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener, { passive: false });
     }
 
 
@@ -825,7 +824,7 @@ export default function Home() {
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
       scale, offsetX, offsetY, _saveNodesToFile, _saveEdgesToFile,
-      interactionMode, panStartCoords, quickPressStartInfo // Added canvas interaction states
+      interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart 
   ]);
 
 
@@ -894,7 +893,7 @@ export default function Home() {
     return newNodes;
   }, [getNodeDimension, containerWidth]); 
 
-  useEffect(() => { // Repulsion when no node is active
+  useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none') return; 
 
     const repulsedNodes = applyRepulsion(nodes, null); 
@@ -917,7 +916,7 @@ export default function Home() {
     }
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, _saveNodesToFile, interactionMode]); 
 
-  useEffect(() => { // Repulsion when a node IS active (fixedNodeId logic)
+  useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
 
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); 
@@ -974,7 +973,7 @@ export default function Home() {
         }
         const data = JSON.parse(text);
         if (data && Array.isArray(data.nodes) && Array.isArray(data.edges)) {
-          // Basic validation of node structure
+          
           const areNodesValid = data.nodes.every((n: any) => 
             typeof n.id === 'string' &&
             typeof n.name === 'string' &&
@@ -983,7 +982,7 @@ export default function Home() {
             Array.isArray(n.tags) &&
             (n.type === 'category' || n.type === 'entity')
           );
-          // Basic validation of edge structure
+          
           const areEdgesValid = data.edges.every((edge: any) => 
             typeof edge.id === 'string' &&
             typeof edge.sourceNodeId === 'string' &&
@@ -1002,7 +1001,7 @@ export default function Home() {
           await _saveNodesToFile(data.nodes as Node[]);
           await _saveEdgesToFile(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
-          await loadInitialData(); // Recenter if "Main" node exists
+          await loadInitialData(); 
         } else {
           alert("Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.");
         }
@@ -1010,7 +1009,7 @@ export default function Home() {
         console.error("Error processing uploaded file:", error);
         alert("Error processing uploaded file. Check console for details.");
       } finally {
-        // Reset file input to allow uploading the same file again if needed
+        
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -1069,8 +1068,6 @@ export default function Home() {
         ref={containerRef}
         className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden"
         style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
-        // onMouseDown={handleCanvasInteractionStart} // Moved to useEffect
-        // onTouchStart={handleCanvasInteractionStart} // Moved to useEffect
       >
         <svg
           className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
@@ -1258,7 +1255,7 @@ export default function Home() {
               setIsCreateNodeDialogOpen(isOpen);
               if (!isOpen) {
                 setActiveInteractionNodeId(null);
-                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); // Clear if dialog is cancelled
+                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); 
               }
             }}
           >
@@ -1463,6 +1460,3 @@ export default function Home() {
     </main>
   );
 }
-
-
-    
