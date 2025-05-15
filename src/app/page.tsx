@@ -39,10 +39,13 @@ const REPULSION_ITERATIONS = 10;
 const BASE_GRID_SIZE = 50; 
 
 // Zoom Slider Constants
-const LOG_SCALE_MIN = 0.04; // 4%
+const LOG_SCALE_MIN = 0.02; // Updated from 0.04
 const LOG_SCALE_MAX = 1.2;  // 120%
 const LINEAR_SLIDER_MIN = 0;
 const LINEAR_SLIDER_MAX = 100;
+
+const EDGE_BASE_SCREEN_THICKNESS = 2;
+
 
 // Helper functions for logarithmic scale conversion
 function linearToLogScale(
@@ -56,8 +59,8 @@ function linearToLogScale(
     console.error("Logarithmic scale bounds must be positive.");
     return logMin; 
   }
-  if (linearMin === linearMax) return logMin; // Avoid division by zero if range is 0
-  if (logMin === logMax) return logMin; // Avoid Math.pow issues if log range is 0
+  if (linearMin === linearMax) return logMin; 
+  if (logMin === logMax) return logMin; 
 
   const G = logMax / logMin;
   const exponent = (linearValue - linearMin) / (linearMax - linearMin);
@@ -76,22 +79,21 @@ function logToLinearScale(
     return linearMin; 
   }
   
-  // Clamp logValue to avoid issues with Math.log if it's outside the defined range
   const clampedLogValue = Math.max(logMin, Math.min(logMax, logValue));
 
-  if (logMin === logMax) return linearMin; // If no log range, return min linear value
+  if (logMin === logMax) return linearMin; 
 
   const G = logMax / logMin;
-  if (G === 1) return linearMin; // Avoid log(1) which is 0, and division by zero
+  if (G === 1) return linearMin; 
   
   const logRatio = clampedLogValue / logMin;
-  if (logRatio <= 0) return linearMin; // Avoid Math.log of non-positive
+  if (logRatio <= 0) return linearMin; 
 
   return linearMin + (linearMax - linearMin) * (Math.log(logRatio) / Math.log(G));
 }
 
 
-// Helper functions for grid (defined outside component for stability if they don't depend on component state/props)
+// Helper functions for grid
 function getGridLineWorldSeparation(scale: number): number {
   if (scale < 0.4) return BASE_GRID_SIZE * 4;
   if (scale < 0.8) return BASE_GRID_SIZE * 2;
@@ -283,7 +285,7 @@ export default function Home() {
     let nodesToSet = loadedNodes;
 
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
-      const mainNode = nodesToSet.find(n => n.tags.includes("Main")); // Use nodesToSet to ensure we use potentially pre-adjusted nodes if logic runs multiple times (should not with flag)
+      const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
@@ -297,7 +299,7 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; // Re-find mainNode in adjusted array
+            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
             await saveNodesToFileCallback(nodesToSet); 
         }
         
@@ -458,7 +460,6 @@ export default function Home() {
         newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
         
-        // Basic check for overlap at exact pending coords (could be expanded)
         let overlapWithExistingAtPending = false;
         for (const existingNode of currentNodesForCreation) {
             const existingNodeDimension = getNodeDimension(existingNode);
@@ -784,7 +785,7 @@ export default function Home() {
           
           const scaleFactor = currentDistance / pinchStartData.initialPinchDistance;
           let newScale = pinchStartData.initialScale * scaleFactor;
-          newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); // Use LOG_SCALE bounds
+          newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); 
 
           if (containerRef.current && isFinite(newScale)) {
             const rect = containerRef.current.getBoundingClientRect();
@@ -1089,7 +1090,6 @@ export default function Home() {
   const [isClient, setIsClient] = useState(false);
   useEffect(() => setIsClient(true), []);
 
-  // Local min/max scale values, updated to new bounds
   const minScale = LOG_SCALE_MIN;
   const maxScale = LOG_SCALE_MAX;
 
@@ -1143,6 +1143,7 @@ export default function Home() {
           await saveNodesToFileCallback(data.nodes as Node[]);
           await saveEdgesToFileCallback(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
+          loadInitialData();
           
         } else {
           alert("Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.");
@@ -1160,6 +1161,10 @@ export default function Home() {
     reader.readAsText(file);
   };
 
+  const worldStrokeWidth = useMemo(() => {
+    return (EDGE_BASE_SCREEN_THICKNESS * (1 + Math.min(scale, 1)) / 2) / Math.max(scale, 0.001);
+  }, [scale]);
+
 
   return (
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
@@ -1172,7 +1177,7 @@ export default function Home() {
                 id="scale-slider"
                 min={LINEAR_SLIDER_MIN}
                 max={LINEAR_SLIDER_MAX}
-                step={1} // Fine enough for linear 0-100 range
+                step={1} 
                 value={isClient ? [logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)] : [logToLinearScale(1, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)]}
                 onValueChange={(value) => {
                     const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
@@ -1275,7 +1280,7 @@ export default function Home() {
                   x2={targetNode.x + targetDim / 2}
                   y2={targetNode.y + targetDim / 2}
                   stroke="hsl(var(--ring))"
-                  strokeWidth={2 / scale} 
+                  strokeWidth={worldStrokeWidth} 
                   opacity="0.6"
                 />
               );
@@ -1287,7 +1292,7 @@ export default function Home() {
                 x2={linkingLinePreview.x2}
                 y2={linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
-                strokeWidth={2 / scale} 
+                strokeWidth={worldStrokeWidth} 
                 strokeDasharray={`${5/scale},${5/scale}`} 
               />
             )}
@@ -1606,6 +1611,3 @@ export default function Home() {
     </main>
   );
 }
-
-
-    
