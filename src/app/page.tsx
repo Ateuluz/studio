@@ -235,7 +235,7 @@ export default function Home() {
           loadedNodes = JSON.parse(storedNodesString) as Node[];
         } catch (e) {
           console.error("Error parsing nodes from localStorage:", e);
-          loadedNodes = []; // Reset to empty array on error
+          loadedNodes = []; 
         }
       }
 
@@ -245,7 +245,7 @@ export default function Home() {
           loadedEdges = JSON.parse(storedEdgesString) as Edge[];
         } catch (e) {
           console.error("Error parsing edges from localStorage:", e);
-          loadedEdges = []; // Reset to empty array on error
+          loadedEdges = []; 
         }
       }
     } catch (error) {
@@ -254,12 +254,13 @@ export default function Home() {
 
     if (loadedNodes.length > 0) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
-      if (mainNode) {
+      if (mainNode && containerWidth > 0) {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
 
         let adjustedNodes = loadedNodes;
-        if (deltaX !== 0 || deltaY !== 0) { 
+        // Only adjust and re-save if there's an actual shift needed
+        if (Math.abs(deltaX) > 0.01 || Math.abs(deltaY) > 0.01) { 
           adjustedNodes = loadedNodes.map(node => ({
             ...node,
             x: node.x + deltaX,
@@ -271,13 +272,12 @@ export default function Home() {
           setNodes(loadedNodes);
         }
         
+        // Use the potentially adjusted mainNode for centering calculations
         const mainNodeAfterAdjustment = adjustedNodes.find(n => n.id === mainNode.id) || mainNode;
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        if (containerWidth > 0) {
-          setOffsetX((containerWidth / 2) - (mainNodeDimension / 2) * scale);
-          setOffsetY((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale);
-        }
+        setOffsetX((containerWidth / 2) - (mainNodeDimension / 2) * scale);
+        setOffsetY((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale);
       } else {
         setNodes(loadedNodes);
       }
@@ -304,7 +304,7 @@ export default function Home() {
 
   useEffect(() => {
     loadDataFromLocalStorage();
-  }, [loadDataFromLocalStorage]);
+  }, [loadDataFromLocalStorage]); // Ensure loadDataFromLocalStorage is stable or its dependencies are listed
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -316,7 +316,7 @@ export default function Home() {
   }, [offsetX, offsetY, scale]);
 
  useEffect(() => {
-    if (activeInteractionNodeId) return; 
+    if (activeInteractionNodeId) return; // Don't adjust pan limits while user is interacting
     if (!containerRef.current || containerWidth === 0 || scale === 0) return;
 
     const nodesToConsider = nodes;
@@ -675,7 +675,7 @@ export default function Home() {
       let targetNodeUnderneath: Node | null = null;
 
       for (const node of nodes) {
-        if (node.id === activeInteractionNodeId) { // Skip the node being dragged
+        if (node.id === activeInteractionNodeId) { // Skip the node being dragged/interacted with
           continue;
         }
 
@@ -854,10 +854,13 @@ export default function Home() {
     } else { changed = true; } 
 
     if (changed) {
-      const timeoutId = setTimeout(() => setNodes(repulsedNodes), 50); 
+      const timeoutId = setTimeout(() => {
+        setNodes(repulsedNodes);
+        saveNodesToLocalStorage(repulsedNodes);
+      }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToLocalStorage]); 
 
   useEffect(() => {
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; 
@@ -876,15 +879,17 @@ export default function Home() {
 
     if (changed) {
       const timeoutId = setTimeout(() => {
-        setNodes(currentNodes => currentNodes.map(cn => {
+        const finalUpdatedNodes = nodes.map(cn => {
             if (cn.id === activeInteractionNodeId) return cn; 
             const rn = repulsedNodes.find(r => r.id === cn.id);
             return rn || cn; 
-        }));
+        });
+        setNodes(finalUpdatedNodes);
+        saveNodesToLocalStorage(finalUpdatedNodes);
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToLocalStorage]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -993,7 +998,8 @@ export default function Home() {
           }}
         >
           <svg
-            className="absolute top-0 left-0 w-full h-full pointer-events-none overflow-visible"
+            className="absolute top-0 left-0 w-full h-full pointer-events-none"
+            overflow="visible" // Allow lines to draw outside initial bounds if nodes are far apart
           >
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
