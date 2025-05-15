@@ -27,16 +27,18 @@ const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
 const CONTAINER_HEIGHT_PX = 500; 
 
-const PRESS_HOLD_THRESHOLD = 700;
-const DRAG_MOVE_THRESHOLD = 10;
+const PRESS_HOLD_THRESHOLD = 700; // ms
+const DRAG_MOVE_THRESHOLD = 10; // pixels
+const QUICK_PRESS_DURATION_THRESHOLD = 250; // ms
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
 const REPULSION_STRENGTH = 0.5;
-const MIN_SEPARATION = 15;
+const MIN_SEPARATION = 15; // world units
 const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50; 
 
+// Helper functions for grid (defined outside component for stability if they don't depend on component state/props)
 function getGridLineWorldSeparation(scale: number): number {
   if (scale < 0.4) return BASE_GRID_SIZE * 4;
   if (scale < 0.8) return BASE_GRID_SIZE * 2;
@@ -137,6 +139,7 @@ export default function Home() {
   const [newNodeTags, setNewNodeTags] = useState("");
   const [newNodeType, setNewNodeType] = useState<'category' | 'entity'>('category');
   const [newNodeBirthday, setNewNodeBirthday] = useState("");
+  const [pendingNodeCreationCoords, setPendingNodeCreationCoords] = useState<{x: number, y: number} | null>(null);
 
   const [isEditNodeDialogOpen, setIsEditNodeDialogOpen] = useState(false);
   const [editingNode, setEditingNode] = useState<Node | null>(null);
@@ -154,15 +157,21 @@ export default function Home() {
   const [editingEdge, setEditingEdge] = useState<Edge | null>(null);
   const [editEdgeTagsInput, setEditEdgeTagsInput] = useState("");
 
+  // Node interaction states
   const [activeInteractionNodeId, setActiveInteractionNodeId] = useState<string | null>(null);
   const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
-  const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null);
+  const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null); // For node interactions
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null);
-
   const [isDraggingForReposition, setIsDraggingForReposition] = useState(false);
   const [isLinkingModeActive, setIsLinkingModeActive] = useState(false);
   const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null);
   const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
+
+  // Canvas interaction states
+  const [interactionMode, setInteractionMode] = useState<'none' | 'backgroundQuickPressCandidate' | 'backgroundPanning' | 'pinchZooming'>('none');
+  const [panStartCoords, setPanStartCoords] = useState<{ x: number; y: number } | null>(null);
+  const [quickPressStartInfo, setQuickPressStartInfo] = useState<{ screenX: number, screenY: number, worldX: number, worldY: number, time: number } | null>(null);
+
 
   const [showSearchBar, setShowSearchBar] = useState(false);
 
@@ -178,6 +187,15 @@ export default function Home() {
     return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
   }, []);
   
+  const _saveNodesToFile = useCallback(async (currentNodes: Node[]) => {
+    await saveNodesToFile(currentNodes);
+  }, []);
+
+  const _saveEdgesToFile = useCallback(async (currentEdges: Edge[]) => {
+    await saveEdgesToFile(currentEdges);
+  }, []);
+
+
   const loadInitialData = useCallback(async () => {
     if (typeof window === 'undefined') return; 
 
@@ -196,21 +214,22 @@ export default function Home() {
 
     if (loadedNodes.length > 0) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
-      if (mainNode && containerWidth > 0) {
+      if (mainNode && containerWidth > 0 && (mainNode.x !==0 || mainNode.y !==0) ) {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
-
+        
         let mainNodeAfterAdjustment = mainNode;
 
+        // Only adjust if the main node is not already at (0,0) to avoid unnecessary writes
         if (Math.abs(deltaX) > 0.01 || Math.abs(deltaY) > 0.01) { 
-          const adjustedNodes = loadedNodes.map(node => ({
-            ...node,
-            x: node.x + deltaX,
-            y: node.y + deltaY,
-          }));
-          nodesToSet = adjustedNodes;
-          await saveNodesToFile(adjustedNodes);
-          mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
+            const adjustedNodes = loadedNodes.map(node => ({
+                ...node,
+                x: node.x + deltaX,
+                y: node.y + deltaY,
+            }));
+            nodesToSet = adjustedNodes;
+            await _saveNodesToFile(adjustedNodes); 
+            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
@@ -222,7 +241,7 @@ export default function Home() {
     setNodes(nodesToSet);
     setEdges(loadedEdges);
 
-  }, [containerWidth, getNodeDimension, scale]);
+  }, [containerWidth, getNodeDimension, scale, _saveNodesToFile]);
 
 
   useEffect(() => {
@@ -323,18 +342,26 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-    const currentClampedOffsetX = Math.max(newPanXLimits.min, Math.min(newPanXLimits.max, offsetX));
-    if (currentClampedOffsetX !== offsetX) {
-        setOffsetX(currentClampedOffsetX);
-    }
-
-    const currentClampedOffsetY = Math.max(newPanYLimits.min, Math.min(newPanYLimits.max, offsetY));
-    if (currentClampedOffsetY !== offsetY) {
-        setOffsetY(currentClampedOffsetY);
-    }
-
+    // These clamping effects are now separate
   }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
 
+  // Effect to clamp offsetX
+  useEffect(() => {
+    if (activeInteractionNodeId) return;
+    const currentClampedOffsetX = Math.max(panXSliderLimits.min, Math.min(panXSliderLimits.max, offsetX));
+    if (currentClampedOffsetX !== offsetX && isFinite(currentClampedOffsetX)) {
+        setOffsetX(currentClampedOffsetX);
+    }
+  }, [panXSliderLimits, offsetX, activeInteractionNodeId]);
+
+  // Effect to clamp offsetY
+  useEffect(() => {
+    if (activeInteractionNodeId) return;
+    const currentClampedOffsetY = Math.max(panYSliderLimits.min, Math.min(panYSliderLimits.max, offsetY));
+    if (currentClampedOffsetY !== offsetY && isFinite(currentClampedOffsetY)) {
+        setOffsetY(currentClampedOffsetY);
+    }
+  }, [panYSliderLimits, offsetY, activeInteractionNodeId]);
 
   const createNode = async () => {
     if (newNodeName && containerWidth > 0 && scale !== 0) {
@@ -344,7 +371,7 @@ export default function Home() {
 
       if (tagsArray.includes("Main")) {
         currentNodesForCreation = currentNodesForCreation.map(n => {
-          if (n.tags.includes("Main")) {
+          if (n.id !== editingNode?.id && n.tags.includes("Main")) { // ensure not removing from self if editing
             return { ...n, tags: n.tags.filter(t => t !== "Main") };
           }
           return n;
@@ -354,40 +381,64 @@ export default function Home() {
       let newNodeX = 0;
       let newNodeY = 0;
       let placed = false;
-      let attempts = 0;
       const newNodeDimension = getNodeDimension(newNodeType);
 
-      const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
-      const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
-
-      const creationAreaWorldWidth = (containerWidth / 2) / scale; 
-      const creationAreaWorldHeight = (CONTAINER_HEIGHT_PX / 2) / scale; 
-
-      do {
-        newNodeX = worldViewCenterX - (creationAreaWorldWidth / 2) + Math.random() * creationAreaWorldWidth;
-        newNodeY = worldViewCenterY - (creationAreaWorldHeight / 2) + Math.random() * creationAreaWorldHeight;
-
+      if (pendingNodeCreationCoords) {
+        newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; // Center node on click point
+        newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
+        // Overlap check for pending coords (optional, could be removed if exact placement is desired)
         let overlap = false;
-        for (const existingNode of currentNodesForCreation) { 
-          const existingNodeDimension = getNodeDimension(existingNode);
-          if (
-            newNodeX < existingNode.x + existingNodeDimension &&
-            newNodeX + newNodeDimension > existingNode.x &&
-            newNodeY < existingNode.y + existingNodeDimension &&
-            newNodeY + newNodeDimension > existingNode.y
-          ) {
-            overlap = true;
-            break;
-          }
+        for (const existingNode of currentNodesForCreation) {
+            const existingNodeDimension = getNodeDimension(existingNode);
+            if (newNodeX < existingNode.x + existingNodeDimension &&
+                newNodeX + newNodeDimension > existingNode.x &&
+                newNodeY < existingNode.y + existingNodeDimension &&
+                newNodeY + newNodeDimension > existingNode.y) {
+                overlap = true;
+                break;
+            }
         }
-        if (!overlap) placed = true;
-        attempts++;
-      } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
-
-      if (!placed) { 
-        newNodeX = worldViewCenterX - newNodeDimension / 2;
-        newNodeY = worldViewCenterY - newNodeDimension / 2;
+        if (!overlap) {
+            placed = true;
+        }
+        // If overlap, fall through to random placement logic OR place anyway (current behavior falls through)
+        setPendingNodeCreationCoords(null); // Clear after use
       }
+      
+      if (!placed) {
+        let attempts = 0;
+        const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
+        const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
+        const creationAreaWorldWidth = (containerWidth / 2) / scale; 
+        const creationAreaWorldHeight = (CONTAINER_HEIGHT_PX / 2) / scale; 
+
+        do {
+          newNodeX = worldViewCenterX - (creationAreaWorldWidth / 2) + Math.random() * creationAreaWorldWidth;
+          newNodeY = worldViewCenterY - (creationAreaWorldHeight / 2) + Math.random() * creationAreaWorldHeight;
+
+          let overlap = false;
+          for (const existingNode of currentNodesForCreation) { 
+            const existingNodeDimension = getNodeDimension(existingNode);
+            if (
+              newNodeX < existingNode.x + existingNodeDimension &&
+              newNodeX + newNodeDimension > existingNode.x &&
+              newNodeY < existingNode.y + existingNodeDimension &&
+              newNodeY + newNodeDimension > existingNode.y
+            ) {
+              overlap = true;
+              break;
+            }
+          }
+          if (!overlap) placed = true;
+          attempts++;
+        } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
+
+        if (!placed) { 
+          newNodeX = worldViewCenterX - newNodeDimension / 2;
+          newNodeY = worldViewCenterY - newNodeDimension / 2;
+        }
+      }
+
 
       const newNodeToAdd: Node = {
         id: crypto.randomUUID(),
@@ -402,7 +453,7 @@ export default function Home() {
       
       const updatedNodes = [...currentNodesForCreation, newNodeToAdd];
       setNodes(updatedNodes);
-      await saveNodesToFile(updatedNodes);
+      await _saveNodesToFile(updatedNodes);
 
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
@@ -440,7 +491,7 @@ export default function Home() {
       }
       
       setNodes(provisionallyUpdatedNodes);
-      await saveNodesToFile(provisionallyUpdatedNodes);
+      await _saveNodesToFile(provisionallyUpdatedNodes);
       setEditingNode(null);
       setIsEditNodeDialogOpen(false);
     }
@@ -452,11 +503,11 @@ export default function Home() {
     const nodeIdToDelete = editingNode.id;
     const updatedNodes = nodes.filter(node => node.id !== nodeIdToDelete);
     setNodes(updatedNodes);
-    await saveNodesToFile(updatedNodes);
+    await _saveNodesToFile(updatedNodes);
 
     const updatedEdges = edges.filter(edge => edge.sourceNodeId !== nodeIdToDelete && edge.targetNodeId !== nodeIdToDelete);
     setEdges(updatedEdges);
-    await saveEdgesToFile(updatedEdges);
+    await _saveEdgesToFile(updatedEdges);
     
     setEditingNode(null);
     setIsEditNodeDialogOpen(false);
@@ -482,7 +533,7 @@ export default function Home() {
       };
       const updatedEdges = [...edges, newEdgeToAdd];
       setEdges(updatedEdges);
-      await saveEdgesToFile(updatedEdges);
+      await _saveEdgesToFile(updatedEdges);
 
       setIsCreateEdgeDialogOpen(false);
       setNewEdgeDataSourceNodeId(null);
@@ -498,7 +549,7 @@ export default function Home() {
         edge.id === editingEdge.id ? { ...edge, tags: updatedTags } : edge
       );
       setEdges(updatedEdges);
-      await saveEdgesToFile(updatedEdges);
+      await _saveEdgesToFile(updatedEdges);
 
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
@@ -509,7 +560,7 @@ export default function Home() {
     if (editingEdge) {
       const updatedEdges = edges.filter(edge => edge.id !== editingEdge.id);
       setEdges(updatedEdges);
-      await saveEdgesToFile(updatedEdges);
+      await _saveEdgesToFile(updatedEdges);
 
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
@@ -548,166 +599,234 @@ export default function Home() {
     setPressHoldTimer(timer);
   };
 
+  // Canvas interaction handlers
+  const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
+    if (event.target !== containerRef.current) return; // Only interact if click is on the canvas itself
+
+    const point = 'touches' in event ? event.touches[0] : event;
+    const screenCoords = { x: point.clientX, y: point.clientY };
+    const worldCoords = screenToWorld(point.clientX, point.clientY);
+
+    setInteractionMode('backgroundQuickPressCandidate');
+    setPanStartCoords(screenCoords);
+    setQuickPressStartInfo({ 
+      screenX: screenCoords.x, 
+      screenY: screenCoords.y, 
+      worldX: worldCoords.x, 
+      worldY: worldCoords.y, 
+      time: Date.now() 
+    });
+
+  }, [screenToWorld]);
+
   useEffect(() => {
-    const handleInteractionMove = (event: MouseEvent | TouchEvent) => {
-      if (!activeInteractionNodeId || !interactionStartPos || !dragOffset || !containerRef.current) return;
-      if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+    const currentContainerRef = containerRef.current;
 
-      const point = 'touches' in event ? event.touches[0] : event;
-      if (!point) return; 
+    const handleMove = (event: MouseEvent | TouchEvent) => {
+      // Node interaction move
+      if (activeInteractionNodeId && interactionStartPos && dragOffset && containerRef.current) {
+        if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+        const point = 'touches' in event ? event.touches[0] : event;
+        if (!point) return; 
 
-      const worldMousePos = screenToWorld(point.clientX, point.clientY);
+        const worldMousePos = screenToWorld(point.clientX, point.clientY);
+        const screenDx = point.clientX - interactionStartPos.x;
+        const screenDy = point.clientY - interactionStartPos.y;
 
-      const screenDx = point.clientX - interactionStartPos.x;
-      const screenDy = point.clientY - interactionStartPos.y;
+        if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
+          if (pressHoldTimer) { 
+            clearTimeout(pressHoldTimer);
+            setPressHoldTimer(null);
+          }
 
-      if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
-        if (pressHoldTimer) { 
+          if (isLinkingModeActive && linkingSourceNodeId) {
+            setIsDraggingForReposition(false); 
+            const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
+            if (sourceNode) {
+              const sourceDim = getNodeDimension(sourceNode);
+              setLinkingLinePreview({
+                x1: sourceNode.x + sourceDim / 2,
+                y1: sourceNode.y + sourceDim / 2,
+                x2: worldMousePos.x,
+                y2: worldMousePos.y,
+              });
+            }
+          } else {
+            setIsDraggingForReposition(true);
+            setNodes(prevNodes => prevNodes.map(n => {
+              if (n.id === activeInteractionNodeId) {
+                let newX = worldMousePos.x - dragOffset.x;
+                let newY = worldMousePos.y - dragOffset.y;
+                return { ...n, x: newX, y: newY };
+              }
+              return n;
+            }));
+          }
+        }
+      }
+      // Canvas interaction move
+      else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords) {
+        const point = 'touches' in event ? event.touches[0] : event;
+        const currentX = point.clientX;
+        const currentY = point.clientY;
+        if (Math.abs(currentX - panStartCoords.x) > DRAG_MOVE_THRESHOLD || Math.abs(currentY - panStartCoords.y) > DRAG_MOVE_THRESHOLD) {
+          setInteractionMode('backgroundPanning');
+        }
+      } else if (interactionMode === 'backgroundPanning' && panStartCoords) {
+        const point = 'touches' in event ? event.touches[0] : event;
+        const dx = point.clientX - panStartCoords.x;
+        const dy = point.clientY - panStartCoords.y;
+        setOffsetX(prev => prev + dx);
+        setOffsetY(prev => prev + dy);
+        setPanStartCoords({ x: point.clientX, y: point.clientY });
+      }
+    };
+
+    const handleEnd = async (event: MouseEvent | TouchEvent) => {
+      // Node interaction end
+      if (activeInteractionNodeId) {
+        if (pressHoldTimer) {
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
 
-        if (isLinkingModeActive && linkingSourceNodeId) {
-          setIsDraggingForReposition(false); 
-          const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
-          if (sourceNode) {
-            const sourceDim = getNodeDimension(sourceNode);
-            setLinkingLinePreview({
-              x1: sourceNode.x + sourceDim / 2,
-              y1: sourceNode.y + sourceDim / 2,
-              x2: worldMousePos.x,
-              y2: worldMousePos.y,
-            });
+        const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+        if (!point || !containerRef.current) {
+          if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
+          setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
+          setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
+          return;
+        }
+
+        const worldMouseReleasePos = screenToWorld(point.clientX, point.clientY);
+        let targetNodeUnderneath: Node | null = null;
+
+        for (const node of nodes) {
+          if (node.id === activeInteractionNodeId) continue; 
+          const nodeDim = getNodeDimension(node);
+          if (
+            worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
+            worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim
+          ) {
+            targetNodeUnderneath = node;
+            break; 
           }
-        } else {
-          setIsDraggingForReposition(true);
-          setNodes(prevNodes => prevNodes.map(n => {
-            if (n.id === activeInteractionNodeId) {
-              let newX = worldMousePos.x - dragOffset.x;
-              let newY = worldMousePos.y - dragOffset.y;
-              return { ...n, x: newX, y: newY };
-            }
-            return n;
-          }));
         }
+
+        if (linkingLinePreview && linkingSourceNodeId) { 
+          const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
+          if(sourceNode){ 
+              if (targetNodeUnderneath) { 
+                  const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
+                  if (existingEdge) {
+                      setEditingEdge(existingEdge);
+                      setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
+                      setIsEditEdgeDialogOpen(true);
+                  } else {
+                      setNewEdgeDataSourceNodeId(linkingSourceNodeId);
+                      setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
+                      setNewEdgeTagsInput("");
+                      setIsCreateEdgeDialogOpen(true);
+                  }
+              } else { 
+                  const updatedNodes = nodes.map(n => {
+                      if (n.id === linkingSourceNodeId) {
+                          const nodeDim = getNodeDimension(n);
+                          let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
+                          let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
+                          return { ...n, x: newX, y: newY };
+                      }
+                      return n;
+                  });
+                  setNodes(updatedNodes);
+                  await _saveNodesToFile(updatedNodes); 
+              }
+          }
+        } else if (isDraggingForReposition) { 
+          const draggedNodeId = activeInteractionNodeId; 
+          if (targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
+              const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
+              if (existingEdge) {
+                  setEditingEdge(existingEdge);
+                  setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
+                  setIsEditEdgeDialogOpen(true);
+              } else {
+                  setNewEdgeDataSourceNodeId(draggedNodeId);
+                  setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
+                  setNewEdgeTagsInput("");
+                  setIsCreateEdgeDialogOpen(true);
+              }
+          }
+          await _saveNodesToFile(nodes); 
+        } else if (isLinkingModeActive) { 
+          setShowSearchBar(true);
+        } else if (!isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
+          const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
+          if (nodeToEdit) openEditNodeDialog(nodeToEdit);
+        }
+
+        if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !showSearchBar) {
+          setActiveInteractionNodeId(null);
+        }
+        setInteractionStartPos(null);
+        setDragOffset(null);
+        setIsDraggingForReposition(false);
+        setIsLinkingModeActive(false);
+        setLinkingSourceNodeId(null);
+        setLinkingLinePreview(null);
+      } 
+      // Canvas interaction end
+      else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
+        const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+        const releaseTime = Date.now();
+        const duration = releaseTime - quickPressStartInfo.time;
+        const screenDistanceMoved = Math.sqrt(
+          Math.pow(point.clientX - quickPressStartInfo.screenX, 2) +
+          Math.pow(point.clientY - quickPressStartInfo.screenY, 2)
+        );
+
+        if (duration < QUICK_PRESS_DURATION_THRESHOLD && screenDistanceMoved < DRAG_MOVE_THRESHOLD) {
+          setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
+          setIsCreateNodeDialogOpen(true);
+        }
+        setQuickPressStartInfo(null);
       }
+
+      setInteractionMode('none');
+      setPanStartCoords(null);
     };
 
-    const handleInteractionEnd = async (event: MouseEvent | TouchEvent) => {
-      if (pressHoldTimer) {
-        clearTimeout(pressHoldTimer);
-        setPressHoldTimer(null);
-      }
-
-      const point = 'changedTouches' in event ? event.changedTouches[0] : event;
-       if (!point || !containerRef.current) {
-         if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
-        setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
-        setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
-        return;
-      }
-
-      const worldMouseReleasePos = screenToWorld(point.clientX, point.clientY);
-      let targetNodeUnderneath: Node | null = null;
-
-      for (const node of nodes) {
-        if (node.id === activeInteractionNodeId) { 
-          continue;
-        }
-
-        const nodeDim = getNodeDimension(node);
-        if (
-          worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
-          worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim
-        ) {
-          targetNodeUnderneath = node;
-          break; 
-        }
-      }
-
-
-      if (linkingLinePreview && linkingSourceNodeId) { 
-        const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
-        if(sourceNode){ 
-            if (targetNodeUnderneath) { 
-                const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
-                if (existingEdge) {
-                    setEditingEdge(existingEdge);
-                    setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
-                    setIsEditEdgeDialogOpen(true);
-                } else {
-                    setNewEdgeDataSourceNodeId(linkingSourceNodeId);
-                    setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
-                    setNewEdgeTagsInput("");
-                    setIsCreateEdgeDialogOpen(true);
-                }
-            } else { 
-                const updatedNodes = nodes.map(n => {
-                    if (n.id === linkingSourceNodeId) {
-                        const nodeDim = getNodeDimension(n);
-                        let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
-                        let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
-                        return { ...n, x: newX, y: newY };
-                    }
-                    return n;
-                });
-                setNodes(updatedNodes);
-                await saveNodesToFile(updatedNodes); 
-            }
-        }
-      } else if (isDraggingForReposition && activeInteractionNodeId) { 
-        const draggedNodeId = activeInteractionNodeId; 
-        if (targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
-            const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
-            if (existingEdge) {
-                setEditingEdge(existingEdge);
-                setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
-                setIsEditEdgeDialogOpen(true);
-            } else {
-                setNewEdgeDataSourceNodeId(draggedNodeId);
-                setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
-                setNewEdgeTagsInput("");
-                setIsCreateEdgeDialogOpen(true);
-            }
-        }
-        await saveNodesToFile(nodes); 
-
-      } else if (isLinkingModeActive && activeInteractionNodeId) { 
-        setShowSearchBar(true);
-      } else if (activeInteractionNodeId && !isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
-        const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
-        if (nodeToEdit) openEditNodeDialog(nodeToEdit);
-      }
-
-      if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !showSearchBar) {
-         setActiveInteractionNodeId(null);
-      }
-      setInteractionStartPos(null);
-      setDragOffset(null);
-      setIsDraggingForReposition(false);
-      setIsLinkingModeActive(false);
-      setLinkingSourceNodeId(null);
-      setLinkingLinePreview(null);
-    };
-
-    const currentContainer = containerRef.current;
-    window.addEventListener('mousemove', handleInteractionMove);
-    window.addEventListener('mouseup', handleInteractionEnd);
-    if (currentContainer) { 
-        currentContainer.addEventListener('touchmove', handleInteractionMove, { passive: false });
-        currentContainer.addEventListener('touchend', handleInteractionEnd);
+    // Add global listeners if any interaction is active
+    if (activeInteractionNodeId || interactionMode !== 'none') {
+      window.addEventListener('mousemove', handleMove);
+      window.addEventListener('mouseup', handleEnd);
+      window.addEventListener('touchmove', handleMove, { passive: false });
+      window.addEventListener('touchend', handleEnd);
+    } else if (currentContainerRef) { // Only add canvas-specific listeners if no global interaction
+      currentContainerRef.addEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
+      currentContainerRef.addEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener, { passive: false });
     }
 
+
     return () => {
-      window.removeEventListener('mousemove', handleInteractionMove);
-      window.removeEventListener('mouseup',handleInteractionEnd);
-      if (currentContainer) {
-        currentContainer.removeEventListener('touchmove', handleInteractionMove);
-        currentContainer.removeEventListener('touchend', handleInteractionEnd);
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', handleEnd);
+      if (currentContainerRef) {
+        currentContainerRef.removeEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
+        currentContainerRef.removeEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener);
       }
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
-  }, [activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, scale, offsetX, offsetY]);
+  }, [
+      activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, 
+      isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, 
+      linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
+      isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
+      scale, offsetX, offsetY, _saveNodesToFile, _saveEdgesToFile,
+      interactionMode, panStartCoords, quickPressStartInfo // Added canvas interaction states
+  ]);
 
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
@@ -742,7 +861,7 @@ export default function Home() {
           const targetSeparation = radiusA + radiusB + MIN_SEPARATION;
           const targetSeparationSquared = targetSeparation * targetSeparation;
 
-          if (distanceSquared < targetSeparationSquared && distanceSquared > 0) { 
+          if (distanceSquared < targetSeparationSquared && distanceSquared > 0.001) { 
             const distance = Math.sqrt(distanceSquared);
             const overlap = targetSeparation - distance;
             const forceMagnitude = overlap * REPULSION_STRENGTH; 
@@ -775,8 +894,8 @@ export default function Home() {
     return newNodes;
   }, [getNodeDimension, containerWidth]); 
 
-  useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId) return; 
+  useEffect(() => { // Repulsion when no node is active
+    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none') return; 
 
     const repulsedNodes = applyRepulsion(nodes, null); 
     let changed = false;
@@ -792,14 +911,14 @@ export default function Home() {
     if (changed) {
       const timeoutId = setTimeout(async () => {
         setNodes(repulsedNodes);
-        await saveNodesToFile(repulsedNodes);
+        await _saveNodesToFile(repulsedNodes);
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, _saveNodesToFile, interactionMode]); 
 
-  useEffect(() => {
-    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId) return; 
+  useEffect(() => { // Repulsion when a node IS active (fixedNodeId logic)
+    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
 
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); 
     let changed = false;
@@ -821,11 +940,11 @@ export default function Home() {
             return rn || cn; 
         });
         setNodes(finalUpdatedNodes);
-        await saveNodesToFile(finalUpdatedNodes);
+        await _saveNodesToFile(finalUpdatedNodes);
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, _saveNodesToFile, interactionMode]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -878,10 +997,10 @@ export default function Home() {
             return;
           }
 
-          await saveNodesToFile(data.nodes as Node[]);
-          await saveEdgesToFile(data.edges as Edge[]);
           setNodes(data.nodes as Node[]);
           setEdges(data.edges as Edge[]);
+          await _saveNodesToFile(data.nodes as Node[]);
+          await _saveEdgesToFile(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
           await loadInitialData(); // Recenter if "Main" node exists
         } else {
@@ -950,6 +1069,8 @@ export default function Home() {
         ref={containerRef}
         className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden"
         style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
+        // onMouseDown={handleCanvasInteractionStart} // Moved to useEffect
+        // onTouchStart={handleCanvasInteractionStart} // Moved to useEffect
       >
         <svg
           className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
@@ -1131,10 +1252,16 @@ export default function Home() {
       
       <div className="mt-8 flex flex-col items-center gap-4">
         <div className="flex gap-4">
-          <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
+          <Dialog 
+            open={isCreateNodeDialogOpen} 
+            onOpenChange={(isOpen) => {
               setIsCreateNodeDialogOpen(isOpen);
-              if (!isOpen) setActiveInteractionNodeId(null); 
-          }}>
+              if (!isOpen) {
+                setActiveInteractionNodeId(null);
+                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); // Clear if dialog is cancelled
+              }
+            }}
+          >
             <DialogTrigger asChild>
               <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
                 <Plus className="mr-2 h-5 w-5" />
@@ -1181,7 +1308,7 @@ export default function Home() {
           </Dialog>
 
           <Button onClick={loadInitialData} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
-              <Download className="mr-2 h-5 w-5 transform rotate-180" /> {/* Using rotated download for load */}
+              <Download className="mr-2 h-5 w-5 transform rotate-180" /> 
               Load Data
           </Button>
         </div>
@@ -1337,3 +1464,5 @@ export default function Home() {
   );
 }
 
+
+    
