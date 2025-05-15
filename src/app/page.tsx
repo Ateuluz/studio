@@ -305,7 +305,7 @@ export default function Home() {
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        setActiveInteractionNodeId(null); // Ensure no node interactions interfere
+        setActiveInteractionNodeId(null); 
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
@@ -315,7 +315,7 @@ export default function Home() {
     setNodes(nodesToSet);
     setEdges(loadedEdges);
     
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete]);
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete, setOffsetX, setOffsetY, setNodes, setEdges, setActiveInteractionNodeId]);
 
 
   useEffect(() => {
@@ -421,20 +421,40 @@ export default function Home() {
   // Effect to clamp offsetX
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
-    const currentClampedOffsetX = Math.max(panXSliderLimits.min, Math.min(panXSliderLimits.max, offsetX));
-    if (Math.round(currentClampedOffsetX) !== Math.round(offsetX) && isFinite(currentClampedOffsetX)) {
-        setOffsetX(Math.round(currentClampedOffsetX));
+    
+    const currentVal = offsetX;
+    const roundedVal = Math.round(currentVal);
+
+    const minLimit = panXSliderLimits.min;
+    const maxLimit = panXSliderLimits.max;
+    
+    let clampedRoundedVal = Math.max(minLimit, Math.min(maxLimit, roundedVal));
+
+    if (clampedRoundedVal !== roundedVal && isFinite(clampedRoundedVal)) {
+        setOffsetX(clampedRoundedVal);
+    } else if (currentVal !== roundedVal && Math.abs(currentVal - roundedVal) > 0.0001 && isFinite(roundedVal)) { 
+        setOffsetX(roundedVal);
     }
-  }, [panXSliderLimits, offsetX, activeInteractionNodeId, interactionMode]);
+  }, [panXSliderLimits, offsetX, activeInteractionNodeId, interactionMode, setOffsetX]);
 
   // Effect to clamp offsetY
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
-    const currentClampedOffsetY = Math.max(panYSliderLimits.min, Math.min(panYSliderLimits.max, offsetY));
-    if (Math.round(currentClampedOffsetY) !== Math.round(offsetY) && isFinite(currentClampedOffsetY)) {
-        setOffsetY(Math.round(currentClampedOffsetY));
+
+    const currentVal = offsetY;
+    const roundedVal = Math.round(currentVal);
+
+    const minLimit = panYSliderLimits.min;
+    const maxLimit = panYSliderLimits.max;
+
+    let clampedRoundedVal = Math.max(minLimit, Math.min(maxLimit, roundedVal));
+
+    if (clampedRoundedVal !== roundedVal && isFinite(clampedRoundedVal)) {
+        setOffsetY(clampedRoundedVal);
+    } else if (currentVal !== roundedVal && Math.abs(currentVal - roundedVal) > 0.0001 && isFinite(roundedVal)) {
+        setOffsetY(roundedVal);
     }
-  }, [panYSliderLimits, offsetY, activeInteractionNodeId, interactionMode]);
+  }, [panYSliderLimits, offsetY, activeInteractionNodeId, interactionMode, setOffsetY]);
 
   const createNode = async () => {
     if (newNodeName && containerWidth > 0 && scale !== 0 && isFinite(scale)) {
@@ -642,11 +662,12 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    // Reset canvas-global interaction states
+    // Reset canvas-global interaction states first
     setInteractionMode('none');
     setPanStartCoords(null);
     setQuickPressStartInfo(null);
     setPinchStartData(null);
+
 
     if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); 
 
@@ -705,7 +726,7 @@ export default function Home() {
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
-            // Reset node-specific interaction states when pinch starts
+            // Explicitly clear node-specific interaction states when pinch starts
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
@@ -749,7 +770,7 @@ export default function Home() {
     setPinchStartData(null);
 
 
-  }, [screenToWorld, scale, pressHoldTimer]); 
+  }, [screenToWorld, scale, pressHoldTimer, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setPressHoldTimer]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -850,7 +871,9 @@ export default function Home() {
         let targetNodeUnderneath: Node | null = null;
 
         for (const node of nodes) {
-          if (node.id === activeInteractionNodeId) continue; 
+          if (node.id === activeInteractionNodeId && !isLinkingModeActive) continue; 
+          if (isLinkingModeActive && node.id === linkingSourceNodeId) continue;
+
           const nodeDim = getNodeDimension(node);
           if (
             worldMouseReleasePos.x >= node.x && worldMouseReleasePos.x <= node.x + nodeDim &&
@@ -982,7 +1005,12 @@ export default function Home() {
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
       scale, offsetX, offsetY, saveNodesToFileCallback, saveEdgesToFileCallback,
-      interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart, pinchStartData
+      interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart, pinchStartData,
+      setNodes, setEdges, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive,
+      setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
+      setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
+      setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
+      setShowSearchBar, setIsCreateNodeDialogOpen, setPendingNodeCreationCoords
   ]);
 
 
@@ -1072,7 +1100,7 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
 
   useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
@@ -1101,7 +1129,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -1182,6 +1210,8 @@ export default function Home() {
     return (EDGE_BASE_SCREEN_THICKNESS * (1 + Math.min(scale, 1)) / 2) / Math.max(scale, 0.001);
   }, [scale]);
 
+  const linearScaleSliderValue = isClient ? Math.round(logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)) : Math.round(logToLinearScale(1, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX));
+
 
   return (
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
@@ -1195,7 +1225,7 @@ export default function Home() {
                 min={LINEAR_SLIDER_MIN}
                 max={LINEAR_SLIDER_MAX}
                 step={1} 
-                value={isClient ? [logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)] : [logToLinearScale(1, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)]}
+                value={[linearScaleSliderValue]}
                 onValueChange={(value) => {
                     const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
                     setScale(Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)));
@@ -1210,7 +1240,7 @@ export default function Home() {
                 min={panXSliderLimits.min}
                 max={panXSliderLimits.max}
                 step={1}
-                value={[offsetX]}
+                value={[Math.round(offsetX)]}
                 onValueChange={(value) => setOffsetX(value[0])}
                 className="col-span-2"
                 disabled={panXSliderLimits.min >= panXSliderLimits.max} 
@@ -1223,7 +1253,7 @@ export default function Home() {
                 min={panYSliderLimits.min}
                 max={panYSliderLimits.max}
                 step={1}
-                value={[offsetY]}
+                value={[Math.round(offsetY)]}
                 onValueChange={(value) => setOffsetY(value[0])}
                 className="col-span-2"
                 disabled={panYSliderLimits.min >= panYSliderLimits.max} 
