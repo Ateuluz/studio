@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Plus, Link2, Trash2, Download } from "lucide-react";
+import { Plus, Link2, Trash2, Download, Upload } from "lucide-react";
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 
@@ -128,6 +128,7 @@ export default function Home() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const transformedContentRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [containerWidth, setContainerWidth] = useState(0); 
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
@@ -188,6 +189,7 @@ export default function Home() {
       loadedEdges = await loadEdgesFromFile();
     } catch (error) {
       console.error("Failed to load data from server actions:", error);
+      alert("Error loading data. Check console for details.");
     }
 
     let nodesToSet = loadedNodes;
@@ -198,6 +200,8 @@ export default function Home() {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
 
+        let mainNodeAfterAdjustment = mainNode;
+
         if (Math.abs(deltaX) > 0.01 || Math.abs(deltaY) > 0.01) { 
           const adjustedNodes = loadedNodes.map(node => ({
             ...node,
@@ -205,10 +209,10 @@ export default function Home() {
             y: node.y + deltaY,
           }));
           nodesToSet = adjustedNodes;
-          await saveNodesToFile(adjustedNodes); 
+          await saveNodesToFile(adjustedNodes);
+          mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
         }
         
-        const mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
         setOffsetX((containerWidth / 2) - (mainNodeDimension / 2) * scale);
@@ -235,10 +239,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    async function fetchData() {
-      await loadInitialData();
-    }
-    fetchData();
+    loadInitialData();
   }, [loadInitialData]);
 
 
@@ -840,6 +841,65 @@ export default function Home() {
     return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
   }, [isClient, offsetX, offsetY, scale, containerWidth]);
   
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result;
+        if (typeof text !== 'string') {
+          alert("Error reading file content.");
+          return;
+        }
+        const data = JSON.parse(text);
+        if (data && Array.isArray(data.nodes) && Array.isArray(data.edges)) {
+          // Basic validation of node structure
+          const areNodesValid = data.nodes.every((n: any) => 
+            typeof n.id === 'string' &&
+            typeof n.name === 'string' &&
+            typeof n.x === 'number' &&
+            typeof n.y === 'number' &&
+            Array.isArray(n.tags) &&
+            (n.type === 'category' || n.type === 'entity')
+          );
+          // Basic validation of edge structure
+          const areEdgesValid = data.edges.every((edge: any) => 
+            typeof edge.id === 'string' &&
+            typeof edge.sourceNodeId === 'string' &&
+            typeof edge.targetNodeId === 'string' &&
+            Array.isArray(edge.tags) &&
+            edge.tags.every((tag: any) => typeof tag.name === 'string')
+          );
+
+          if (!areNodesValid || !areEdgesValid) {
+            alert("Uploaded file has invalid node or edge structure.");
+            return;
+          }
+
+          await saveNodesToFile(data.nodes as Node[]);
+          await saveEdgesToFile(data.edges as Edge[]);
+          setNodes(data.nodes as Node[]);
+          setEdges(data.edges as Edge[]);
+          alert("Data uploaded and saved successfully!");
+          await loadInitialData(); // Recenter if "Main" node exists
+        } else {
+          alert("Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.");
+        }
+      } catch (error) {
+        console.error("Error processing uploaded file:", error);
+        alert("Error processing uploaded file. Check console for details.");
+      } finally {
+        // Reset file input to allow uploading the same file again if needed
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
+
 
   return (
     <main className="flex flex-col items-center justify-start min-h-screen p-4 sm:p-6 md:p-8 lg:p-10 bg-background text-foreground">
@@ -1069,66 +1129,81 @@ export default function Home() {
         </div>
       )}
       
-      <div className="mt-8 flex gap-4">
-        <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
-            setIsCreateNodeDialogOpen(isOpen);
-            if (!isOpen) setActiveInteractionNodeId(null); 
-        }}>
-          <DialogTrigger asChild>
-            <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
-              <Plus className="mr-2 h-5 w-5" />
-              Create New Node
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
-            <DialogHeader>
-              <DialogTitle className="text-2xl">Add New Node</DialogTitle>
-              <DialogDescription>Define attributes for the new node. Click create when you're done.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-6 py-6">
-              <div className="grid gap-3">
-                <Label htmlFor="create-node-name" className="text-md">Name</Label>
-                <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
-              </div>
-              <div className="grid gap-3">
-                  <Label className="text-md">Type</Label>
-                  <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
-                      <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
-                      <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
-                  </RadioGroup>
-              </div>
-              {newNodeType === 'entity' && (
+      <div className="mt-8 flex flex-col items-center gap-4">
+        <div className="flex gap-4">
+          <Dialog open={isCreateNodeDialogOpen} onOpenChange={(isOpen) => {
+              setIsCreateNodeDialogOpen(isOpen);
+              if (!isOpen) setActiveInteractionNodeId(null); 
+          }}>
+            <DialogTrigger asChild>
+              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-lg px-6 py-3 rounded-lg">
+                <Plus className="mr-2 h-5 w-5" />
+                Create New Node
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
+              <DialogHeader>
+                <DialogTitle className="text-2xl">Add New Node</DialogTitle>
+                <DialogDescription>Define attributes for the new node. Click create when you're done.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-6 py-6">
                 <div className="grid gap-3">
-                  <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
-                  <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
+                  <Label htmlFor="create-node-name" className="text-md">Name</Label>
+                  <Input id="create-node-name" placeholder="Node Name" value={newNodeName} onChange={(e) => setNewNodeName(e.target.value)} className="text-md p-3" />
                 </div>
-              )}
-              <div className="grid gap-3">
-                <Label htmlFor="create-node-description" className="text-md">Description</Label>
-                <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
+                <div className="grid gap-3">
+                    <Label className="text-md">Type</Label>
+                    <RadioGroup defaultValue="category" onValueChange={(value: 'category' | 'entity') => setNewNodeType(value)} value={newNodeType} className="flex space-x-4 pt-1">
+                        <div className="flex items-center space-x-2"><RadioGroupItem value="category" id="type-category-create-node" /><Label htmlFor="type-category-create-node">Category</Label></div>
+                        <div className="flex items-center space-x-2"><RadioGroupItem value="entity" id="type-entity-create-node" /><Label htmlFor="type-entity-create-node">Entity</Label></div>
+                    </RadioGroup>
+                </div>
+                {newNodeType === 'entity' && (
+                  <div className="grid gap-3">
+                    <Label htmlFor="create-node-birthday" className="text-md">Birthday</Label>
+                    <Input id="create-node-birthday" type="date" value={newNodeBirthday} onChange={(e) => setNewNodeBirthday(e.target.value)} className="text-md p-3" />
+                  </div>
+                )}
+                <div className="grid gap-3">
+                  <Label htmlFor="create-node-description" className="text-md">Description</Label>
+                  <Input id="create-node-description" placeholder="Brief description" value={newNodeDescription} onChange={(e) => setNewNodeDescription(e.target.value)} className="text-md p-3" />
+                </div>
+                <div className="grid gap-3">
+                  <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
+                  <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
+                </div>
               </div>
-              <div className="grid gap-3">
-                <Label htmlFor="create-node-tags" className="text-md">Tags</Label>
-                <Input id="create-node-tags" placeholder="tag1, tag2" value={newNodeTags} onChange={(e) => setNewNodeTags(e.target.value)} className="text-md p-3" />
-              </div>
-            </div>
-            <DialogFooter>
-              <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-              <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+              <DialogFooter>
+                <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
+                <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
-        <Button onClick={loadInitialData} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
-            <Download className="mr-2 h-5 w-5" />
-            Load Data
-        </Button>
-        <Button asChild variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
-          <a href="/api/download-all-data" download="node_weaver_data.json">
-            <Download className="mr-2 h-5 w-5" />
-            Download Data
-          </a>
-        </Button>
+          <Button onClick={loadInitialData} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
+              <Download className="mr-2 h-5 w-5 transform rotate-180" /> {/* Using rotated download for load */}
+              Load Data
+          </Button>
+        </div>
+        <div className="flex gap-4">
+          <Button asChild variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
+            <a href="/api/download-all-data" download="node_weaver_data.json">
+              <Download className="mr-2 h-5 w-5" />
+              Download Data
+            </a>
+          </Button>
+          <Button onClick={() => fileInputRef.current?.click()} variant="outline" className="shadow-lg text-lg px-6 py-3 rounded-lg">
+            <Upload className="mr-2 h-5 w-5" />
+            Upload Data
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept=".json"
+            className="hidden"
+          />
+        </div>
       </div>
 
 
