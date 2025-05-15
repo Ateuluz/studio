@@ -25,6 +25,8 @@ import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3, Search a
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { Toaster } from "@/components/ui/toaster";
 
 
 const CATEGORY_NODE_DIMENSION = 160;
@@ -226,11 +228,11 @@ export default function Home() {
   const [editEdgeTagsInput, setEditEdgeTagsInput] = useState("");
 
   const [activeInteractionNodeId, setActiveInteractionNodeId] = useState<string | null>(null);
-  const pressHoldTimerRef = useRef<NodeJS.Timeout | null>(null); // Use ref for pressHoldTimer
+  const pressHoldTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null); 
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null);
   const [isDraggingForReposition, setIsDraggingForReposition] = useState(false);
-  const isDraggingForRepositionRef = useRef(isDraggingForReposition); // Ref for isDraggingForReposition
+  const isDraggingForRepositionRef = useRef(isDraggingForReposition);
   const [isLinkingModeActive, setIsLinkingModeActive] = useState(false);
   const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null);
   const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
@@ -257,6 +259,13 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<Node[]>([]);
 
   const [isLayoutLocked, setIsLayoutLocked] = useState(false);
+  const [isFocusModeActive, setIsFocusModeActive] = useState(false);
+  const [focusModeStartNodeId, setFocusModeStartNodeId] = useState<string | null>(null);
+  const [focusModeExpandedNodeIds, setFocusModeExpandedNodeIds] = useState<Set<string>>(new Set());
+  const [focusModeVisibleNodeIds, setFocusModeVisibleNodeIds] = useState<Set<string>>(new Set());
+  
+  const { toast } = useToast();
+
 
   useEffect(() => { activeInteractionNodeIdRef.current = activeInteractionNodeId; }, [activeInteractionNodeId]);
   useEffect(() => { isDraggingForRepositionRef.current = isDraggingForReposition; }, [isDraggingForReposition]);
@@ -283,11 +292,73 @@ export default function Home() {
     return { x: worldX, y: worldY };
   }, [offsetX, offsetY, scale]);
 
+  const openEditNodeDialog = useCallback((node: Node) => {
+    setEditingNode(node);
+    setEditNodeName(node.name);
+    setEditNodeDescription(node.description);
+    setEditNodeTags(node.tags.join(', '));
+    setEditNodeBirthday(node.birthday || "");
+    setConnectNodeSearchQuery(""); 
+    setConnectNodeSearchResults([]); 
+    setIsEditNodeDialogOpen(true);
+    setActiveInteractionNodeId(null); 
+  }, []);
+
+  const findExistingEdge = useCallback((nodeId1: string, nodeId2: string): Edge | undefined => {
+    return edges.find(edge =>
+      (edge.sourceNodeId === nodeId1 && edge.targetNodeId === nodeId2) ||
+      (edge.sourceNodeId === nodeId2 && edge.targetNodeId === nodeId1)
+    );
+  }, [edges]);
+
+  const handleToggleFocusMode = useCallback((activate?: boolean) => {
+    const targetState = typeof activate === 'boolean' ? activate : !isFocusModeActive;
+
+    if (targetState) { // Activating Focus Mode
+        if (nodes.length === 0) {
+            toast({ title: "Focus Mode", description: "Cannot activate Focus Mode: No nodes in the graph.", variant: "destructive" });
+            setIsFocusModeActive(false); 
+            return;
+        }
+        setIsFocusModeActive(true);
+        setIsLayoutLocked(true);
+
+        const mainNode = nodes.find(n => n.tags.includes("Main"));
+        const startNode = mainNode || nodes[0]; 
+
+        if (startNode) {
+            setFocusModeStartNodeId(startNode.id);
+            setFocusModeExpandedNodeIds(new Set([startNode.id]));
+            
+            const nodeDimension = getNodeDimension(startNode.type);
+            const targetScale = 1.0; 
+            
+            const targetOffsetX = (containerWidth / 2) - (startNode.x + nodeDimension / 2) * targetScale;
+            const targetOffsetY = (containerHeight / 2) - (startNode.y + nodeDimension / 2) * targetScale;
+            
+            setScale(targetScale);
+            setOffsetX(Math.round(targetOffsetX));
+            setOffsetY(Math.round(targetOffsetY));
+        } else { 
+            setIsFocusModeActive(false);
+            setIsLayoutLocked(false);
+            toast({ title: "Focus Mode", description: "Error finding a start node for Focus Mode.", variant: "destructive" });
+        }
+    } else { // Deactivating Focus Mode
+        setIsFocusModeActive(false);
+        setIsLayoutLocked(false); 
+        setFocusModeStartNodeId(null);
+        setFocusModeExpandedNodeIds(new Set());
+        setFocusModeVisibleNodeIds(new Set());
+    }
+  }, [isFocusModeActive, nodes, getNodeDimension, containerWidth, containerHeight, setIsFocusModeActive, setIsLayoutLocked, setFocusModeStartNodeId, setFocusModeExpandedNodeIds, setFocusModeVisibleNodeIds, setScale, setOffsetX, setOffsetY, toast]);
+
+
  const loadInitialData = useCallback(async () => {
     if (typeof window === 'undefined') return; 
 
     let loadedNodes: Node[] = [];
-    let loadedEdges: Edge[] = [];
+    let loadedEdgesData: Edge[] = [];
 
     try {
       loadedNodes = await loadNodesFromFile();
@@ -296,18 +367,18 @@ export default function Home() {
         loadedNodes = [];
     }
     try {
-        loadedEdges = await loadEdgesFromFile();
+        loadedEdgesData = await loadEdgesFromFile();
     } catch (error) {
         console.warn("Error loading edges file, starting with empty edges:", error);
-        loadedEdges = [];
+        loadedEdgesData = [];
     }
 
     let nodesToSet = loadedNodes;
-    setActiveInteractionNodeId(null); 
-
+    
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0 && containerHeight > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
+        setActiveInteractionNodeId(null); 
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
@@ -326,15 +397,13 @@ export default function Home() {
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        // Critical order: set active interaction to null *before* setting offsets that might trigger effects
-        setActiveInteractionNodeId(null);
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((containerHeight / 2) - (mainNodeDimension / 2) * scale));
       }
       setInitialLoadAndCenteringComplete(true);
     }
     setNodes(nodesToSet);
-    setEdges(loadedEdges);
+    setEdges(loadedEdgesData);
     
   }, [containerWidth, containerHeight, getNodeDimension, scale, saveNodesToFileCallback, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete, setOffsetX, setOffsetY, setNodes, setEdges, setActiveInteractionNodeId]);
 
@@ -342,17 +411,21 @@ export default function Home() {
   useEffect(() => {
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      setContainerWidth(rect.width);
-      setContainerHeight(rect.height);
-       if (rect.height > 0 && !initialLoadAndCenteringComplete) { 
-         loadInitialData();
-       }
+      if (rect.width > 0 && rect.height > 0) {
+          setContainerWidth(rect.width);
+          setContainerHeight(rect.height);
+          if (!initialLoadAndCenteringComplete && rect.height > 0 && rect.width > 0) { 
+            loadInitialData();
+          }
+      }
     }
     const handleResize = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        setContainerWidth(rect.width);
-        setContainerHeight(rect.height);
+        if (rect.width > 0 && rect.height > 0) {
+            setContainerWidth(rect.width);
+            setContainerHeight(rect.height);
+        }
       }
     };
     window.addEventListener('resize', handleResize);
@@ -366,7 +439,7 @@ export default function Home() {
 
     const nodesToConsider = nodes.filter(n => n.id !== activeInteractionNodeId);
 
-    let contentMinXWorld = 0, contentMaxXWorld = 0, contentMinYWorld = 0, contentMaxYWorld = 0;
+    let contentMinXWorld, contentMaxXWorld, contentMinYWorld, contentMaxYWorld;
 
     if (nodesToConsider.length > 0) {
       contentMinXWorld = Math.min(...nodesToConsider.map(n => n.x));
@@ -552,17 +625,6 @@ export default function Home() {
     }
   };
 
-  const openEditNodeDialog = useCallback((node: Node) => {
-    setEditingNode(node);
-    setEditNodeName(node.name);
-    setEditNodeDescription(node.description);
-    setEditNodeTags(node.tags.join(', '));
-    setEditNodeBirthday(node.birthday || "");
-    setConnectNodeSearchQuery(""); 
-    setConnectNodeSearchResults([]); 
-    setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null); 
-  }, []);
 
   const saveNodeChanges = async () => {
     if (editingNode && editNodeName) {
@@ -607,13 +669,6 @@ export default function Home() {
     setIsEditNodeDialogOpen(false);
   };
 
-
-  const findExistingEdge = useCallback((nodeId1: string, nodeId2: string): Edge | undefined => {
-    return edges.find(edge =>
-      (edge.sourceNodeId === nodeId1 && edge.targetNodeId === nodeId2) ||
-      (edge.sourceNodeId === nodeId2 && edge.targetNodeId === nodeId1)
-    );
-  }, [edges]);
 
   const createEdge = async () => {
     if (newEdgeDataSourceNodeId && newEdgeDataTargetNodeId) {
@@ -664,24 +719,14 @@ const handleNodeInteractionStart = (
   event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
   node: Node
 ) => {
-  // Clear any canvas-global interaction states first
-  setInteractionMode('none');
-  setPanStartCoords(null);
-  setQuickPressStartInfo(null);
-  setPinchStartData(null);
-
-  if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
-
-  const point = 'touches' in event ? event.touches[0] : event;
-
+  
   if (isLayoutLocked) {
-    event.stopPropagation(); // Prevent canvas background handlers for this event
+    event.stopPropagation(); 
     setActiveInteractionNodeId(node.id);
-    setInteractionStartPos({ x: point.clientX, y: point.clientY });
+    setInteractionStartPos({ x: ('touches' in event ? event.touches[0] : event).clientX, y: ('touches' in event ? event.touches[0] : event).clientY });
     setInteractionMode('nodeInteractionDuringLayoutLock');
-    setPanStartCoords({ x: point.clientX, y: point.clientY }); // Prepare for potential pan
+    setPanStartCoords({ x: ('touches' in event ? event.touches[0] : event).clientX, y: ('touches' in event ? event.touches[0] : event).clientY });
     
-    // Clear node manipulation states as they are disabled under layout lock
     setDragOffset(null);
     if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current); pressHoldTimerRef.current = null;
     setIsDraggingForReposition(false);
@@ -691,7 +736,14 @@ const handleNodeInteractionStart = (
     return; 
   }
 
-  // Original logic for when layout is NOT locked:
+  setInteractionMode('none');
+  setPanStartCoords(null);
+  setQuickPressStartInfo(null);
+  setPinchStartData(null);
+
+  if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+  const point = 'touches' in event ? event.touches[0] : event;
+
   setActiveInteractionNodeId(node.id);
   setInteractionStartPos({ x: point.clientX, y: point.clientY });
   
@@ -741,20 +793,35 @@ const handleNodeInteractionStart = (
       return; 
     }
     
-     // Clear any active node interaction states if starting a canvas interaction
-    setActiveInteractionNodeId(null);
-    setIsDraggingForReposition(false);
-    setIsLinkingModeActive(false);
-    setLinkingSourceNodeId(null);
-    setLinkingLinePreview(null);
-    if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current); pressHoldTimerRef.current = null;
-    setInteractionStartPos(null);
-    setDragOffset(null);
+    if (event.type.startsWith('touch') && event.cancelable) {
+      event.preventDefault(); 
+    }
+
+    if (activeInteractionNodeIdRef.current) { 
+        setActiveInteractionNodeId(null);
+        setIsDraggingForReposition(false);
+        setIsLinkingModeActive(false);
+        setLinkingSourceNodeId(null);
+        setLinkingLinePreview(null);
+        if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current); pressHoldTimerRef.current = null;
+        setInteractionStartPos(null);
+        setDragOffset(null);
+    }
+
 
     if (event.type.startsWith('touch')) {
         const touchEvent = event as React.TouchEvent;
         if (touchEvent.touches.length === 2) {
-            if (touchEvent.cancelable) touchEvent.preventDefault();
+            
+            setActiveInteractionNodeId(null);
+            setIsDraggingForReposition(false);
+            setIsLinkingModeActive(false);
+            setLinkingSourceNodeId(null);
+            setLinkingLinePreview(null);
+            if (pressHoldTimerRef.current) { clearTimeout(pressHoldTimerRef.current); pressHoldTimerRef.current = null; }
+            setInteractionStartPos(null);
+            setDragOffset(null);
+
             setInteractionMode('pinchZooming');
             const initialDistance = getDistance(touchEvent.touches);
             const screenMid = getMidpoint(touchEvent.touches);
@@ -770,9 +837,6 @@ const handleNodeInteractionStart = (
         }
     }
      
-    if (event.type.startsWith('touch') && event.cancelable) {
-      event.preventDefault(); 
-    }
     const point = 'touches' in event ? (event as React.TouchEvent).touches[0] : (event as React.MouseEvent);
     const screenCoords = { x: point.clientX, y: point.clientY };
     const worldCoords = screenToWorld(point.clientX, point.clientY);
@@ -787,7 +851,7 @@ const handleNodeInteractionStart = (
       time: Date.now() 
     });
     setPinchStartData(null); 
-  }, [screenToWorld, scale, pressHoldTimerRef, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData]); 
+  }, [screenToWorld, scale, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -803,7 +867,7 @@ const handleNodeInteractionStart = (
           let newScale = pinchStartData.initialScale * scaleFactor;
           newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); 
 
-          if (containerRef.current && isFinite(newScale) && newScale > 0) { 
+          if (containerRef.current && containerWidth > 0 && containerHeight > 0 && isFinite(newScale) && newScale > 0) { 
             const rect = containerRef.current.getBoundingClientRect();
             const newOffsetX = currentScreenMidpoint.x - rect.left - (pinchStartData.pinchMidpointWorld.x * newScale);
             const newOffsetY = currentScreenMidpoint.y - rect.top - (pinchStartData.pinchMidpointWorld.y * newScale);
@@ -821,11 +885,10 @@ const handleNodeInteractionStart = (
 
           if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
             setInteractionMode('backgroundPanning');
-            // panStartCoords is already set from handleNodeInteractionStart
             setActiveInteractionNodeId(null); 
             setInteractionStartPos(null); 
           }
-      } else if (activeInteractionNodeId && interactionStartPos && !isLayoutLocked) { // Node-based interaction, not layout locked
+      } else if (activeInteractionNodeId && interactionStartPos && !isLayoutLocked) { 
         if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
         const point = 'touches' in event ? event.touches[0] : event;
         if (!point) return; 
@@ -852,7 +915,7 @@ const handleNodeInteractionStart = (
                 y2: worldMousePos.y,
               });
             }
-          } else if (dragOffset) { // dragOffset check means it's a reposition drag
+          } else if (dragOffset) { 
             setIsDraggingForReposition(true);
             setNodes(prevNodes => prevNodes.map(n => {
               if (n.id === activeInteractionNodeId) {
@@ -892,7 +955,6 @@ const handleNodeInteractionStart = (
             setPinchStartData(null);
         }
       } else if (interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeId) {
-          // This was a click on a node while layout was locked, without a drag
           const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
           if (nodeToEdit) {
             openEditNodeDialog(nodeToEdit);
@@ -901,7 +963,7 @@ const handleNodeInteractionStart = (
           setActiveInteractionNodeId(null);
           setInteractionStartPos(null);
           setPanStartCoords(null);
-      } else if (activeInteractionNodeId && !isLayoutLocked) { // Node interaction end, not layout locked
+      } else if (activeInteractionNodeId && !isLayoutLocked) { 
         if (pressHoldTimerRef.current) { 
           clearTimeout(pressHoldTimerRef.current);
           pressHoldTimerRef.current = null;
@@ -931,7 +993,22 @@ const handleNodeInteractionStart = (
           }
         }
 
-        if (linkingLinePreview && linkingSourceNodeId) { 
+        if (isFocusModeActive) {
+            const clickedNode = nodes.find(n => n.id === activeInteractionNodeId);
+            if (clickedNode && focusModeVisibleNodeIds.has(clickedNode.id)) {
+                if (clickedNode.id !== focusModeStartNodeId) {
+                    setFocusModeExpandedNodeIds(prevExpandedIds => {
+                        const newExpandedIds = new Set(prevExpandedIds);
+                        if (newExpandedIds.has(clickedNode.id)) {
+                            newExpandedIds.delete(clickedNode.id);
+                        } else {
+                            newExpandedIds.add(clickedNode.id);
+                        }
+                        return newExpandedIds;
+                    });
+                }
+            }
+        } else if (linkingLinePreview && linkingSourceNodeId) { 
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
           if(sourceNode){ 
               if (targetNodeUnderneath) { 
@@ -977,14 +1054,18 @@ const handleNodeInteractionStart = (
           }
           await saveNodesToFileCallback(nodes); 
         } else if (isLinkingModeActive) { 
-          // Press-hold without drag
-        } else if (!isDraggingForReposition && !isLinkingModeActive) { 
-          const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
-          if (nodeToEdit) openEditNodeDialog(nodeToEdit);
+          // Press-hold without drag - no specific action here now as search bar is separate
+        } else if (!isDraggingForReposition && !isLinkingModeActive) { // Simple Click
+           if (!isFocusModeActive) { 
+                const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
+                if (nodeToEdit) openEditNodeDialog(nodeToEdit);
+           }
         }
 
-        if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) {
+        if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !isFocusModeActive) {
           setActiveInteractionNodeId(null);
+        } else if (isFocusModeActive) {
+            setActiveInteractionNodeId(null); 
         }
         setInteractionStartPos(null);
         setDragOffset(null);
@@ -1008,11 +1089,9 @@ const handleNodeInteractionStart = (
           Math.pow(point.clientY - quickPressStartInfo.screenY, 2)
         );
 
-        if (duration < QUICK_PRESS_DURATION_THRESHOLD && screenDistanceMoved < DRAG_MOVE_THRESHOLD) {
-          if (!isLayoutLocked) { 
+        if (duration < QUICK_PRESS_DURATION_THRESHOLD && screenDistanceMoved < DRAG_MOVE_THRESHOLD && !isLayoutLocked && !isFocusModeActive) {
             setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
             setIsCreateNodeDialogOpen(true);
-          }
         }
         setQuickPressStartInfo(null); 
       }
@@ -1030,7 +1109,7 @@ const handleNodeInteractionStart = (
     }
 
     
-    if (activeInteractionNodeId || interactionMode !== 'none') {
+    if (interactionMode !== 'none' || activeInteractionNodeId) {
       window.addEventListener('mousemove', handleMove);
       window.addEventListener('mouseup', handleEnd);
       window.addEventListener('touchmove', handleMove, { passive: false });
@@ -1050,7 +1129,7 @@ const handleNodeInteractionStart = (
       if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current);
     };
   }, [
-      activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimerRef, nodes, edges, 
+      activeInteractionNodeId, interactionStartPos, dragOffset, nodes, edges, 
       isDraggingForReposition, openEditNodeDialog, isLinkingModeActive, 
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
@@ -1060,9 +1139,9 @@ const handleNodeInteractionStart = (
       setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
-      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight, isLayoutLocked 
+      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight, isLayoutLocked, isFocusModeActive, 
+      focusModeStartNodeId, focusModeExpandedNodeIds, focusModeVisibleNodeIds, handleToggleFocusMode
   ]);
-
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
     if (currentNodes.length < 2 || containerWidth === 0) return currentNodes;
@@ -1129,8 +1208,9 @@ const handleNodeInteractionStart = (
     return newNodes;
   }, [getNodeDimension, containerWidth]); 
 
+
   useEffect(() => { 
-    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none' || isLayoutLocked) return; 
+    if (isLayoutLocked || nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none') return; 
 
     const repulsedNodes = applyRepulsion(nodes, null); 
     let changed = false;
@@ -1153,7 +1233,7 @@ const handleNodeInteractionStart = (
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, isLayoutLocked]); 
 
   useEffect(() => { 
-    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none' || isLayoutLocked) return; 
+    if (isLayoutLocked || nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
 
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); 
     let changed = false;
@@ -1180,6 +1260,47 @@ const handleNodeInteractionStart = (
       return () => clearTimeout(timeoutId);
     }
   }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, isLayoutLocked]); 
+
+  useEffect(() => {
+    if (!isFocusModeActive || !focusModeStartNodeId || !nodes.length) {
+        setFocusModeVisibleNodeIds(new Set());
+        return;
+    }
+
+    const newVisibleNodes = new Set<string>();
+
+    const startNodeExists = nodes.find(n => n.id === focusModeStartNodeId);
+    if (startNodeExists) {
+        newVisibleNodes.add(focusModeStartNodeId);
+    } else {
+        handleToggleFocusMode(false); // Start node was deleted or became invalid
+        return;
+    }
+
+    focusModeExpandedNodeIds.forEach(expandedId => {
+        if (nodes.find(n => n.id === expandedId)) { // Ensure expanded node still exists
+            newVisibleNodes.add(expandedId);
+            const expandedNode = nodes.find(n => n.id === expandedId);
+            if (expandedNode) {
+                edges.forEach(edge => {
+                    if (edge.sourceNodeId === expandedId && nodes.find(n => n.id === edge.targetNodeId)) { // Ensure target node exists
+                        newVisibleNodes.add(edge.targetNodeId);
+                    } else if (edge.targetNodeId === expandedId && nodes.find(n => n.id === edge.sourceNodeId)) { // Ensure source node exists
+                        newVisibleNodes.add(edge.sourceNodeId);
+                    }
+                });
+            }
+        }
+    });
+    setFocusModeVisibleNodeIds(newVisibleNodes);
+
+    // Automatically turn off focus mode if only the start node is left and it's the only one in expanded,
+    // or if focusModeExpandedNodeIds becomes empty for some reason (e.g. start node deleted and no others were expanded)
+    if(focusModeExpandedNodeIds.size === 0 && isFocusModeActive){
+        handleToggleFocusMode(false);
+    }
+
+  }, [isFocusModeActive, focusModeStartNodeId, focusModeExpandedNodeIds, nodes, edges, handleToggleFocusMode]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -1331,9 +1452,27 @@ const handleNodeInteractionStart = (
     setIsEditNodeDialogOpen(false); 
   };
 
+  const nodesToRender = useMemo(() => {
+      if (!isClient) return [];
+      return isFocusModeActive
+          ? nodes.filter(n => focusModeVisibleNodeIds.has(n.id))
+          : nodes;
+  }, [isClient, isFocusModeActive, nodes, focusModeVisibleNodeIds]);
+
+  const edgesToRender = useMemo(() => {
+      if (!isClient) return [];
+      return isFocusModeActive
+          ? edges.filter(edge =>
+              focusModeVisibleNodeIds.has(edge.sourceNodeId) &&
+              focusModeVisibleNodeIds.has(edge.targetNodeId)
+            )
+          : edges;
+  }, [isClient, isFocusModeActive, edges, focusModeVisibleNodeIds]);
+
 
   return (
     <main className="flex flex-col items-center h-screen bg-background text-foreground overflow-hidden"> 
+      <Toaster />
       <h1 className="text-3xl font-bold tracking-tight my-4 text-center">Node Weaver</h1>
 
       <div
@@ -1374,7 +1513,7 @@ const handleNodeInteractionStart = (
                       const newScaleCandidate = linearToLogScale(newLinearValue, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
                       const finalNewScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScaleCandidate));
 
-                      if (containerRef.current && containerWidth > 0 && containerHeight > 0 && Math.abs(finalNewScale - scale) > 0.0001) {
+                      if (containerRef.current && containerWidth > 0 && containerHeight > 0 && Math.abs(finalNewScale - scale) > 0.0001 && isFinite(finalNewScale) && finalNewScale > 0) {
                           const rect = containerRef.current.getBoundingClientRect();
                           const absScreenCenterX = rect.left + (containerWidth / 2);
                           const absScreenCenterY = rect.top + (containerHeight / 2);
@@ -1387,7 +1526,7 @@ const handleNodeInteractionStart = (
                           setScale(finalNewScale);
                           setOffsetX(Math.round(newOffsetX));
                           setOffsetY(Math.round(newOffsetY));
-                      } else if (Math.abs(finalNewScale - scale) > 0.0001) {
+                      } else if (Math.abs(finalNewScale - scale) > 0.0001 && isFinite(finalNewScale) && finalNewScale > 0) {
                           setScale(finalNewScale);
                       }
                   }}
@@ -1426,10 +1565,22 @@ const handleNodeInteractionStart = (
                     id="layout-lock-switch"
                     checked={isLayoutLocked}
                     onCheckedChange={setIsLayoutLocked}
+                    disabled={isFocusModeActive}
                 />
-                <Label htmlFor="layout-lock-switch" className="text-sm flex items-center">
+                <Label htmlFor="layout-lock-switch" className={cn("text-sm flex items-center", isFocusModeActive && "opacity-50")}>
                     {isLayoutLocked ? <Lock className="mr-2 h-4 w-4" /> : <Unlock className="mr-2 h-4 w-4" />}
                     Layout Lock
+                </Label>
+            </div>
+            <div className="flex items-center space-x-2 px-1">
+                <Switch
+                    id="focus-mode-switch"
+                    checked={isFocusModeActive}
+                    onCheckedChange={() => handleToggleFocusMode()}
+                />
+                <Label htmlFor="focus-mode-switch" className="text-sm flex items-center">
+                    {isFocusModeActive ? <Eye className="mr-2 h-4 w-4" /> : <EyeOff className="mr-2 h-4 w-4" />}
+                    Focus Mode
                 </Label>
             </div>
         </div>
@@ -1479,7 +1630,7 @@ const handleNodeInteractionStart = (
             className="absolute top-0 left-0 w-full h-full pointer-events-none" 
             overflow="visible" 
           >
-            {isClient && edges.map(edge => {
+            {edgesToRender.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
               const targetNode = nodes.find(n => n.id === edge.targetNodeId);
               if (!sourceNode || !targetNode) return null;
@@ -1513,7 +1664,7 @@ const handleNodeInteractionStart = (
             )}
           </svg>
 
-          {isClient && nodes.map((node) => {
+          {nodesToRender.map((node) => {
             const nodeDimension = getNodeDimension(node);
             
             const nodeStyles: React.CSSProperties = {
@@ -1533,19 +1684,18 @@ const handleNodeInteractionStart = (
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease', // Removed transform transition
+              transition: 'box-shadow 0.2s ease', 
               userSelect: 'none', 
               border: '1px solid hsl(var(--border))' 
             };
             
-            // No longer applying scale transform here for active nodes to match edge dragging feel
             if (node.type === 'entity') { 
               nodeStyles.borderColor = 'hsl(var(--ring))'; 
               nodeStyles.borderWidth = '2px';
             }
             
-            if(activeInteractionNodeId === node.id){
-                nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
+             if (activeInteractionNodeId === node.id && !isDraggingForReposition) {
+                nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))';
             }
             
             const minFontSizeForNodeText = 6; 
@@ -1620,8 +1770,8 @@ const handleNodeInteractionStart = (
             <DialogTrigger asChild>
               <Button 
                 className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg w-full justify-start px-4 py-2"
-                disabled={isLayoutLocked || isCreateNodeButtonDisabled}
-                title={isLayoutLocked ? "Node creation disabled while Layout Lock is active" : (isCreateNodeButtonDisabled ? "Node name must be unique and not empty" : "Create New Node")}
+                disabled={isCreateNodeButtonDisabled || isLayoutLocked || isFocusModeActive}
+                title={isLayoutLocked || isFocusModeActive ? "Node creation disabled while Layout Lock or Focus Mode is active" : (isCreateNodeButtonDisabled ? "Node name must be unique and not empty" : "Create New Node")}
               >
                 <Plus className="mr-2 h-5 w-5" />
                 Create Node
@@ -1710,7 +1860,7 @@ const handleNodeInteractionStart = (
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isCreateNodeButtonDisabled || isLayoutLocked}>Create Node</Button>
+            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isCreateNodeButtonDisabled || isLayoutLocked || isFocusModeActive}>Create Node</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1787,14 +1937,14 @@ const handleNodeInteractionStart = (
                 </div>
               </div>
               <DialogFooter className="flex justify-between items-center pt-2"> 
-                <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5"  disabled={isLayoutLocked} title={isLayoutLocked ? "Node deletion disabled while Layout Lock is active" : "Delete Node"}>
+                <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5"  disabled={isLayoutLocked || isFocusModeActive} title={isLayoutLocked || isFocusModeActive ? "Node deletion disabled while Layout Lock or Focus Mode is active" : "Delete Node"}>
                   <Trash2 className="mr-2 h-5 w-5" /> Delete Node
                 </Button>
                 <div>
                   <DialogClose asChild>
                     <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null); setConnectNodeSearchQuery(""); setConnectNodeSearchResults([]);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
                   </DialogClose>
-                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled || isLayoutLocked} title={isLayoutLocked ? "Node editing disabled while Layout Lock is active" : (isEditNodeButtonDisabled ? "Node name must be unique and not empty" : "Save Changes")}>Save Changes</Button>
+                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled || isLayoutLocked || isFocusModeActive} title={isLayoutLocked || isFocusModeActive ? "Node editing disabled while Layout Lock or Focus Mode is active" : (isEditNodeButtonDisabled ? "Node name must be unique and not empty" : "Save Changes")}>Save Changes</Button>
                 </div>
               </DialogFooter>
             </div> 
@@ -1833,7 +1983,7 @@ const handleNodeInteractionStart = (
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-            <Button type="submit" onClick={createEdge} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isLayoutLocked} title={isLayoutLocked ? "Edge creation disabled while Layout Lock is active" : "Create Edge"}><Link2 className="mr-2 h-5 w-5" />Create Edge</Button>
+            <Button type="submit" onClick={createEdge} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isLayoutLocked || isFocusModeActive} title={isLayoutLocked || isFocusModeActive ? "Edge creation disabled while Layout Lock or Focus Mode is active" : "Create Edge"}><Link2 className="mr-2 h-5 w-5" />Create Edge</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1865,14 +2015,14 @@ const handleNodeInteractionStart = (
               </div>
             </div>
             <DialogFooter className="flex justify-between"> 
-              <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto" disabled={isLayoutLocked} title={isLayoutLocked ? "Edge deletion disabled while Layout Lock is active" : "Delete Edge"}>
+              <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto" disabled={isLayoutLocked || isFocusModeActive} title={isLayoutLocked || isFocusModeActive ? "Edge deletion disabled while Layout Lock or Focus Mode is active" : "Delete Edge"}>
                 <Trash2 className="mr-2 h-5 w-5" /> Delete Edge
               </Button>
               <div>
                 <DialogClose asChild>
                   <Button variant="outline" className="text-md px-5 py-2.5 mr-2">Cancel</Button>
                 </DialogClose>
-                <Button type="submit" onClick={saveEdgeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isLayoutLocked} title={isLayoutLocked ? "Edge editing disabled while Layout Lock is active" : "Save Changes"}>
+                <Button type="submit" onClick={saveEdgeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isLayoutLocked || isFocusModeActive} title={isLayoutLocked || isFocusModeActive ? "Edge editing disabled while Layout Lock or Focus Mode is active" : "Save Changes"}>
                   Save Changes
                 </Button>
               </div>
@@ -1934,3 +2084,6 @@ const handleNodeInteractionStart = (
     
 
     
+
+
+
