@@ -207,9 +207,11 @@ export default function Home() {
       loadedEdges = await loadEdgesFromFile();
     } catch (error) {
       console.error("Failed to load data from server actions:", error);
+      // Potentially set some error state to inform the user
     }
 
     let nodesToSet = loadedNodes;
+    let mainNodeFoundAndCentered = false;
 
     if (loadedNodes.length > 0 && containerWidth > 0 ) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
@@ -232,12 +234,16 @@ export default function Home() {
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        setOffsetX((containerWidth / 2) - (mainNodeDimension / 2) * scale);
-        setOffsetY((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale);
+        setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
+        setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
+        mainNodeFoundAndCentered = true;
       }
     }
     setNodes(nodesToSet);
     setEdges(loadedEdges);
+    if(mainNodeFoundAndCentered){
+      setActiveInteractionNodeId(null); // Ensure no node is active after recentering
+    }
 
   }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY]);
 
@@ -597,8 +603,10 @@ export default function Home() {
 
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
     const currentTarget = event.target as HTMLElement;
-    if (containerRef.current && !containerRef.current.contains(currentTarget)) return;
-    if (currentTarget !== containerRef.current) return;
+    // Ensure interaction only starts if the direct target is the container itself
+    if (containerRef.current && currentTarget !== containerRef.current) {
+        return;
+    }
 
     const point = 'touches' in event ? event.touches[0] : event;
     const screenCoords = { x: point.clientX, y: point.clientY };
@@ -614,7 +622,7 @@ export default function Home() {
       time: Date.now() 
     });
 
-  }, [screenToWorld, containerRef]);
+  }, [screenToWorld]); // Removed containerRef from deps as it's stable
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -914,7 +922,7 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]); 
 
   useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
@@ -943,7 +951,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -1150,14 +1158,17 @@ export default function Home() {
 
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
+            const activeTransform = (activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)) ? ' scale(1.05)' : '';
+            const zIndexValue = activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10);
+
             const nodeStyles: React.CSSProperties = {
               position: 'absolute',
-              transform: `translate(${node.x}px, ${node.y}px)`,
+              transform: `translate(${node.x}px, ${node.y}px)${activeTransform}`,
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))", 
               color: "hsl(var(--card-foreground))",     
-              zIndex: activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10),
+              zIndex: zIndexValue,
               borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
@@ -1177,7 +1188,7 @@ export default function Home() {
 
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
-                nodeStyles.transform = `translate(${node.x}px, ${node.y}px) scale(1.05)`; 
+                 // The scale(1.05) is now part of activeTransform
             }
             
             const minFontSize = 6; 
