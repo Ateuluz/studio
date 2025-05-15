@@ -207,7 +207,6 @@ export default function Home() {
       loadedEdges = await loadEdgesFromFile();
     } catch (error) {
       console.error("Failed to load data from server actions:", error);
-      // Potentially set some error state to inform the user
     }
 
     let nodesToSet = loadedNodes;
@@ -228,11 +227,14 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            await saveNodesToFileCallback(adjustedNodes); 
+            // No immediate save here, save will happen after setNodes if logic requires
             mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
+        
+        // Clear active interaction BEFORE setting offsets that might trigger effects
+        setActiveInteractionNodeId(null);
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
@@ -241,11 +243,17 @@ export default function Home() {
     }
     setNodes(nodesToSet);
     setEdges(loadedEdges);
-    if(mainNodeFoundAndCentered){
-      setActiveInteractionNodeId(null); // Ensure no node is active after recentering
+    
+    // If main node was centered, we already cleared activeInteractionNodeId.
+    // If not, and an interaction was somehow active, this might be a good place to clear it too.
+    // However, the bug is specific to centering, so let's keep the fix targeted.
+    // If mainNodeFoundAndCentered, nodesToSet *is* the adjustedNodes.
+    if (mainNodeFoundAndCentered) {
+        await saveNodesToFileCallback(nodesToSet);
     }
 
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY]);
+
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId]);
 
 
   useEffect(() => {
@@ -513,7 +521,7 @@ export default function Home() {
     
     setEditingNode(null);
     setIsEditNodeDialogOpen(false);
-    setActiveInteractionNodeId(null); 
+    // setActiveInteractionNodeId(null); // Handled by onOpenChange of Dialog
   };
 
 
@@ -603,7 +611,6 @@ export default function Home() {
 
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
     const currentTarget = event.target as HTMLElement;
-    // Ensure interaction only starts if the direct target is the container itself
     if (containerRef.current && currentTarget !== containerRef.current) {
         return;
     }
@@ -622,13 +629,12 @@ export default function Home() {
       time: Date.now() 
     });
 
-  }, [screenToWorld]); // Removed containerRef from deps as it's stable
+  }, [screenToWorld]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
 
     const handleMove = (event: MouseEvent | TouchEvent) => {
-      // Node interaction move
       if (activeInteractionNodeId && interactionStartPos && dragOffset && containerRef.current) {
         if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
         const point = 'touches' in event ? event.touches[0] : event;
@@ -669,7 +675,6 @@ export default function Home() {
           }
         }
       }
-      // Canvas interaction move
       else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords) {
         const point = 'touches' in event ? event.touches[0] : event;
         const currentX = point.clientX;
@@ -688,7 +693,6 @@ export default function Home() {
     };
 
     const handleEnd = async (event: MouseEvent | TouchEvent) => {
-      // Node interaction end
       if (activeInteractionNodeId) {
         if (pressHoldTimer) {
           clearTimeout(pressHoldTimer);
@@ -780,7 +784,6 @@ export default function Home() {
         setLinkingSourceNodeId(null);
         setLinkingLinePreview(null);
       } 
-      // Canvas interaction end
       else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
         const point = 'changedTouches' in event ? event.changedTouches[0] : event;
         const releaseTime = Date.now();
@@ -806,7 +809,6 @@ export default function Home() {
       currentContainerRef.addEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener, { passive: false });
     }
 
-    // Add global listeners if any interaction is active
     if (activeInteractionNodeId || interactionMode !== 'none') {
       window.addEventListener('mousemove', handleMove);
       window.addEventListener('mouseup', handleEnd);
@@ -922,7 +924,7 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
 
   useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
@@ -951,7 +953,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -1188,7 +1190,6 @@ export default function Home() {
 
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
-                 // The scale(1.05) is now part of activeTransform
             }
             
             const minFontSize = 6; 
