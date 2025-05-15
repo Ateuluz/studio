@@ -187,11 +187,11 @@ export default function Home() {
     return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
   }, []);
   
-  const _saveNodesToFile = useCallback(async (currentNodes: Node[]) => {
+  const saveNodesToFileCallback = useCallback(async (currentNodes: Node[]) => {
     await saveNodesToFile(currentNodes);
   }, []);
 
-  const _saveEdgesToFile = useCallback(async (currentEdges: Edge[]) => {
+  const saveEdgesToFileCallback = useCallback(async (currentEdges: Edge[]) => {
     await saveEdgesToFile(currentEdges);
   }, []);
 
@@ -207,20 +207,18 @@ export default function Home() {
       loadedEdges = await loadEdgesFromFile();
     } catch (error) {
       console.error("Failed to load data from server actions:", error);
-      // Consider showing a user-friendly error message here
     }
 
     let nodesToSet = loadedNodes;
 
-    if (loadedNodes.length > 0) {
+    if (loadedNodes.length > 0 && containerWidth > 0 ) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
-      if (mainNode && containerWidth > 0 ) { // Removed mainNode.x/y check, always center if "Main" exists
+      if (mainNode) { 
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
         let mainNodeAfterAdjustment = mainNode;
 
-        // Only adjust if the main node is not already at (0,0) to avoid unnecessary writes
         if (Math.abs(deltaX) > 0.0001 || Math.abs(deltaY) > 0.0001) { 
             const adjustedNodes = loadedNodes.map(node => ({
                 ...node,
@@ -228,7 +226,7 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            await _saveNodesToFile(adjustedNodes); 
+            await saveNodesToFileCallback(adjustedNodes); 
             mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
         }
         
@@ -241,7 +239,7 @@ export default function Home() {
     setNodes(nodesToSet);
     setEdges(loadedEdges);
 
-  }, [containerWidth, getNodeDimension, scale, _saveNodesToFile]);
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY]);
 
 
   useEffect(() => {
@@ -259,7 +257,7 @@ export default function Home() {
 
   useEffect(() => {
     loadInitialData();
-  }, [loadInitialData]); // containerWidth is already a dep of loadInitialData
+  }, [loadInitialData]);
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -351,7 +349,7 @@ export default function Home() {
     if (currentClampedOffsetX !== offsetX && isFinite(currentClampedOffsetX)) {
         setOffsetX(currentClampedOffsetX);
     }
-  }, [panXSliderLimits, offsetX, activeInteractionNodeId]);
+  }, [panXSliderLimits, offsetX, activeInteractionNodeId, setOffsetX]);
 
   // Effect to clamp offsetY
   useEffect(() => {
@@ -360,7 +358,7 @@ export default function Home() {
     if (currentClampedOffsetY !== offsetY && isFinite(currentClampedOffsetY)) {
         setOffsetY(currentClampedOffsetY);
     }
-  }, [panYSliderLimits, offsetY, activeInteractionNodeId]);
+  }, [panYSliderLimits, offsetY, activeInteractionNodeId, setOffsetY]);
 
   const createNode = async () => {
     if (newNodeName && containerWidth > 0 && scale !== 0) {
@@ -451,7 +449,7 @@ export default function Home() {
       
       const updatedNodes = [...currentNodesForCreation, newNodeToAdd];
       setNodes(updatedNodes);
-      await _saveNodesToFile(updatedNodes);
+      await saveNodesToFileCallback(updatedNodes);
 
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
@@ -466,7 +464,7 @@ export default function Home() {
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
     setActiveInteractionNodeId(null); 
-  }, []);
+  }, [setEditingNode, setEditNodeName, setEditNodeDescription, setEditNodeTags, setEditNodeBirthday, setIsEditNodeDialogOpen, setActiveInteractionNodeId]);
 
   const saveNodeChanges = async () => {
     if (editingNode && editNodeName) {
@@ -489,7 +487,7 @@ export default function Home() {
       }
       
       setNodes(provisionallyUpdatedNodes);
-      await _saveNodesToFile(provisionallyUpdatedNodes);
+      await saveNodesToFileCallback(provisionallyUpdatedNodes);
       setEditingNode(null);
       setIsEditNodeDialogOpen(false);
     }
@@ -501,11 +499,11 @@ export default function Home() {
     const nodeIdToDelete = editingNode.id;
     const updatedNodes = nodes.filter(node => node.id !== nodeIdToDelete);
     setNodes(updatedNodes);
-    await _saveNodesToFile(updatedNodes);
+    await saveNodesToFileCallback(updatedNodes);
 
     const updatedEdges = edges.filter(edge => edge.sourceNodeId !== nodeIdToDelete && edge.targetNodeId !== nodeIdToDelete);
     setEdges(updatedEdges);
-    await _saveEdgesToFile(updatedEdges);
+    await saveEdgesToFileCallback(updatedEdges);
     
     setEditingNode(null);
     setIsEditNodeDialogOpen(false);
@@ -531,7 +529,7 @@ export default function Home() {
       };
       const updatedEdges = [...edges, newEdgeToAdd];
       setEdges(updatedEdges);
-      await _saveEdgesToFile(updatedEdges);
+      await saveEdgesToFileCallback(updatedEdges);
 
       setIsCreateEdgeDialogOpen(false);
       setNewEdgeDataSourceNodeId(null);
@@ -547,7 +545,7 @@ export default function Home() {
         edge.id === editingEdge.id ? { ...edge, tags: updatedTags } : edge
       );
       setEdges(updatedEdges);
-      await _saveEdgesToFile(updatedEdges);
+      await saveEdgesToFileCallback(updatedEdges);
 
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
@@ -558,7 +556,7 @@ export default function Home() {
     if (editingEdge) {
       const updatedEdges = edges.filter(edge => edge.id !== editingEdge.id);
       setEdges(updatedEdges);
-      await _saveEdgesToFile(updatedEdges);
+      await saveEdgesToFileCallback(updatedEdges);
 
       setEditingEdge(null);
       setIsEditEdgeDialogOpen(false);
@@ -598,7 +596,9 @@ export default function Home() {
   };
 
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
-    if (event.target !== containerRef.current) return; 
+    const currentTarget = event.target as HTMLElement;
+    if (containerRef.current && !containerRef.current.contains(currentTarget)) return;
+    if (currentTarget !== containerRef.current) return;
 
     const point = 'touches' in event ? event.touches[0] : event;
     const screenCoords = { x: point.clientX, y: point.clientY };
@@ -614,7 +614,7 @@ export default function Home() {
       time: Date.now() 
     });
 
-  }, [screenToWorld]);
+  }, [screenToWorld, containerRef]);
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -736,12 +736,12 @@ export default function Home() {
                       return n;
                   });
                   setNodes(updatedNodes);
-                  await _saveNodesToFile(updatedNodes); 
+                  await saveNodesToFileCallback(updatedNodes); 
               }
           }
         } else if (isDraggingForReposition) { 
           const draggedNodeId = activeInteractionNodeId; 
-          if (targetNodeUnderneath && draggedNodeId !== targetNodeUnderneath.id) { 
+          if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { 
               const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
               if (existingEdge) {
                   setEditingEdge(existingEdge);
@@ -754,7 +754,7 @@ export default function Home() {
                   setIsCreateEdgeDialogOpen(true);
               }
           }
-          await _saveNodesToFile(nodes); 
+          await saveNodesToFileCallback(nodes); 
         } else if (isLinkingModeActive) { 
           setShowSearchBar(true);
         } else if (!isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
@@ -823,7 +823,7 @@ export default function Home() {
       isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, 
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
-      scale, offsetX, offsetY, _saveNodesToFile, _saveEdgesToFile,
+      scale, offsetX, offsetY, saveNodesToFileCallback, saveEdgesToFileCallback,
       interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart 
   ]);
 
@@ -910,11 +910,11 @@ export default function Home() {
     if (changed) {
       const timeoutId = setTimeout(async () => {
         setNodes(repulsedNodes);
-        await _saveNodesToFile(repulsedNodes);
+        await saveNodesToFileCallback(repulsedNodes);
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, _saveNodesToFile, interactionMode]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
 
   useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
@@ -939,11 +939,11 @@ export default function Home() {
             return rn || cn; 
         });
         setNodes(finalUpdatedNodes);
-        await _saveNodesToFile(finalUpdatedNodes);
+        await saveNodesToFileCallback(finalUpdatedNodes);
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, _saveNodesToFile, interactionMode]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -998,8 +998,8 @@ export default function Home() {
 
           setNodes(data.nodes as Node[]);
           setEdges(data.edges as Edge[]);
-          await _saveNodesToFile(data.nodes as Node[]);
-          await _saveEdgesToFile(data.edges as Edge[]);
+          await saveNodesToFileCallback(data.nodes as Node[]);
+          await saveEdgesToFileCallback(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
           await loadInitialData(); 
         } else {
@@ -1152,8 +1152,7 @@ export default function Home() {
             const nodeDimension = getNodeDimension(node);
             const nodeStyles: React.CSSProperties = {
               position: 'absolute',
-              left: `${node.x}px`, 
-              top: `${node.y}px`,  
+              transform: `translate(${node.x}px, ${node.y}px)`,
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))", 
@@ -1178,7 +1177,7 @@ export default function Home() {
 
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
-                nodeStyles.transform = 'scale(1.05)'; 
+                nodeStyles.transform = `translate(${node.x}px, ${node.y}px) scale(1.05)`; 
             }
             
             const minFontSize = 6; 
@@ -1460,3 +1459,4 @@ export default function Home() {
     </main>
   );
 }
+
