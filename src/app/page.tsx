@@ -227,13 +227,11 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            // No immediate save here, save will happen after setNodes if logic requires
             mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        // Clear active interaction BEFORE setting offsets that might trigger effects
         setActiveInteractionNodeId(null);
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
@@ -244,14 +242,9 @@ export default function Home() {
     setNodes(nodesToSet);
     setEdges(loadedEdges);
     
-    // If main node was centered, we already cleared activeInteractionNodeId.
-    // If not, and an interaction was somehow active, this might be a good place to clear it too.
-    // However, the bug is specific to centering, so let's keep the fix targeted.
-    // If mainNodeFoundAndCentered, nodesToSet *is* the adjustedNodes.
     if (mainNodeFoundAndCentered) {
         await saveNodesToFileCallback(nodesToSet);
     }
-
 
   }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId]);
 
@@ -398,24 +391,26 @@ export default function Home() {
         newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
         
-        let overlap = false;
+        // Simple overlap check for the specific creation point
+        // More robust overlap avoidance might be needed if this spot is taken.
+        let overlapWithExistingAtPending = false;
         for (const existingNode of currentNodesForCreation) {
             const existingNodeDimension = getNodeDimension(existingNode);
             if (newNodeX < existingNode.x + existingNodeDimension &&
                 newNodeX + newNodeDimension > existingNode.x &&
                 newNodeY < existingNode.y + existingNodeDimension &&
                 newNodeY + newNodeDimension > existingNode.y) {
-                overlap = true;
+                overlapWithExistingAtPending = true;
                 break;
             }
         }
-        if (!overlap) {
-            placed = true;
+        if (!overlapWithExistingAtPending) {
+          placed = true;
         }
         setPendingNodeCreationCoords(null); 
       }
       
-      if (!placed) {
+      if (!placed) { // Fallback to random placement if pending coords were invalid or not set
         let attempts = 0;
         const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
         const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
@@ -610,9 +605,17 @@ export default function Home() {
   };
 
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
-    const currentTarget = event.target as HTMLElement;
-    if (containerRef.current && currentTarget !== containerRef.current) {
-        return;
+    const targetElement = event.target as HTMLElement;
+
+    const isDirectlyOnContainer = containerRef.current === targetElement;
+    const isDirectlyOnTransformedContent = transformedContentRef.current === targetElement;
+
+    if (!isDirectlyOnContainer && !isDirectlyOnTransformedContent) {
+      return; 
+    }
+    
+    if (event.type.startsWith('touch') && event.cancelable) {
+      event.preventDefault();
     }
 
     const point = 'touches' in event ? event.touches[0] : event;
@@ -629,7 +632,7 @@ export default function Home() {
       time: Date.now() 
     });
 
-  }, [screenToWorld]); 
+  }, [screenToWorld, setInteractionMode, setPanStartCoords, setQuickPressStartInfo]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -741,6 +744,7 @@ export default function Home() {
                   const updatedNodes = nodes.map(n => {
                       if (n.id === linkingSourceNodeId) {
                           const nodeDim = getNodeDimension(n);
+                          // Adjust release position by dragOffset for consistency
                           let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
                           let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
                           return { ...n, x: newX, y: newY };
@@ -924,7 +928,7 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]); 
 
   useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
@@ -953,7 +957,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]);
 
 
   const [isClient, setIsClient] = useState(false);
