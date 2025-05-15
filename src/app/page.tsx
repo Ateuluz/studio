@@ -202,7 +202,6 @@ export default function Home() {
     return type === 'category' ? CATEGORY_NODE_DIMENSION : ENTITY_NODE_DIMENSION;
   }, []);
 
-  // Callbacks passed to useNodeInteractions must be defined before useNodeInteractions itself.
   const openEditNodeDialog = useCallback((node: Node) => {
     setEditingNode(node);
     setEditNodeName(node.name);
@@ -225,7 +224,7 @@ export default function Home() {
     setEditingEdge(edge);
     setEditEdgeTagsInput(formatTagsWithDates(edge.tags));
     setIsEditEdgeDialogOpen(true);
-  }, []);
+  }, [edges]); // edges was missing, formatTagsWithDates needs edge.tags
 
   const findExistingEdge = useCallback((nodeId1: string, nodeId2: string): Edge | undefined => {
     return edges.find(edge =>
@@ -234,6 +233,56 @@ export default function Home() {
     );
   }, [edges]);
   
+  const handleToggleFocusMode = useCallback((activate?: boolean) => {
+    const targetState = typeof activate === 'boolean' ? activate : !isFocusModeActive;
+
+    if (targetState) { 
+        if (nodes.length === 0) {
+            toast({ title: "Focus Mode", description: "Cannot activate Focus Mode: No nodes in the graph.", variant: "destructive" });
+            setIsFocusModeActive(false); 
+            return;
+        }
+        // clearNodeInteractionStates(); // This will be obtained from useNodeInteractions
+        setInteractionMode('none'); 
+
+        setIsFocusModeActive(true);
+        setIsLayoutLocked(true); 
+
+        const mainNode = nodes.find(n => n.tags.includes("Main"));
+        const startNode = mainNode || nodes[0]; 
+
+        if (startNode) {
+            setFocusModeStartNodeId(startNode.id);
+            setFocusModeExpandedNodeIds(new Set([startNode.id])); 
+            
+            const nodeDimension = getNodeDimension(startNode.type);
+            const targetScale = 1.0; 
+            
+            // Access viewport methods after it's defined
+            if (viewportRef.current) {
+              const targetOffsetX = Math.round((viewportRef.current.containerWidth / 2) - (startNode.x + nodeDimension / 2) * targetScale);
+              const targetOffsetY = Math.round((viewportRef.current.containerHeight / 2) - (startNode.y + nodeDimension / 2) * targetScale);
+              viewportRef.current.setViewportScale(targetScale);
+              viewportRef.current.setViewportOffset(targetOffsetX, targetOffsetY);
+            }
+        } else { 
+            setIsFocusModeActive(false);
+            setIsLayoutLocked(false); 
+            toast({ title: "Focus Mode", description: "Error finding a start node for Focus Mode.", variant: "destructive" });
+        }
+    } else { 
+        setIsFocusModeActive(false);
+        setIsLayoutLocked(false); 
+        setFocusModeStartNodeId(null);
+        setFocusModeExpandedNodeIds(new Set());
+        setFocusModeVisibleNodeIds(new Set()); 
+    }
+  }, [
+    isFocusModeActive, nodes, getNodeDimension, toast,  // Removed clearNodeInteractionStates
+    // viewport.containerWidth, viewport.containerHeight, viewport.setViewportScale, viewport.setViewportOffset, // Will use viewportRef
+    setIsFocusModeActive, setIsLayoutLocked, setFocusModeStartNodeId, setFocusModeExpandedNodeIds, setFocusModeVisibleNodeIds, setInteractionMode
+  ]);
+
   const {
     activeInteractionNodeId: activeInteractionNodeIdFromHook,
     linkingLinePreview,
@@ -252,14 +301,14 @@ export default function Home() {
     openEditEdgeDialog,
     findExistingEdge,
     getNodeDimension,
-    screenToWorld: (screenX, screenY) => viewport.screenToWorld(screenX, screenY), // viewport defined below
+    screenToWorld: (screenX, screenY) => viewportRef.current ? viewportRef.current.screenToWorld(screenX, screenY) : {x:0, y:0},
     saveNodesToFileCallback: async (currentNodes) => saveNodesToFile(currentNodes),
     isLayoutLocked,
     isFocusModeActive,
     focusModeVisibleNodeIds,
     focusModeStartNodeId,
     toggleNodeInFocusMode: (nodeId: string) => {
-      if (!isFocusModeActive || nodeId === focusModeStartNodeId) return; // Start node cannot be un-toggled by click
+      if (!isFocusModeActive || nodeId === focusModeStartNodeId) return; 
       setFocusModeExpandedNodeIds(prevExpandedIds => {
           const newExpandedIds = new Set(prevExpandedIds);
           if (newExpandedIds.has(nodeId)) {
@@ -272,6 +321,8 @@ export default function Home() {
     },
   });
 
+  const viewportRef = useRef<ReturnType<typeof useViewportManager> | null>(null);
+
   const viewport = useViewportManager({
     containerRef,
     nodes,
@@ -279,61 +330,16 @@ export default function Home() {
     activeInteractionNodeId: activeInteractionNodeIdFromHook, 
     interactionMode,
     onDimensionsReady: (width, height) => {
-        // This callback ensures loadInitialData is called only when dimensions are ready.
-        // It also helps to avoid calling loadInitialData multiple times if viewport dimensions change rapidly initially.
         if (!initialLoadAndCenteringComplete && width > 0 && height > 0) {
-          loadInitialData(); // loadInitialData will use viewport.containerWidth/Height
+          loadInitialData(); 
         }
     }
   });
+  
+  useEffect(() => {
+    viewportRef.current = viewport;
+  }, [viewport]);
 
-  const handleToggleFocusMode = useCallback((activate?: boolean) => {
-    const targetState = typeof activate === 'boolean' ? activate : !isFocusModeActive;
-
-    if (targetState) { 
-        if (nodes.length === 0) {
-            toast({ title: "Focus Mode", description: "Cannot activate Focus Mode: No nodes in the graph.", variant: "destructive" });
-            setIsFocusModeActive(false); 
-            return;
-        }
-        clearNodeInteractionStates(); 
-        setInteractionMode('none'); 
-
-        setIsFocusModeActive(true);
-        setIsLayoutLocked(true); 
-
-        const mainNode = nodes.find(n => n.tags.includes("Main"));
-        const startNode = mainNode || nodes[0]; 
-
-        if (startNode) {
-            setFocusModeStartNodeId(startNode.id);
-            setFocusModeExpandedNodeIds(new Set([startNode.id])); 
-            
-            const nodeDimension = getNodeDimension(startNode.type);
-            const targetScale = 1.0; 
-            
-            const targetOffsetX = Math.round((viewport.containerWidth / 2) - (startNode.x + nodeDimension / 2) * targetScale);
-            const targetOffsetY = Math.round((viewport.containerHeight / 2) - (startNode.y + nodeDimension / 2) * targetScale);
-            
-            viewport.setViewportScale(targetScale);
-            viewport.setViewportOffset(targetOffsetX, targetOffsetY);
-        } else { 
-            setIsFocusModeActive(false);
-            setIsLayoutLocked(false); 
-            toast({ title: "Focus Mode", description: "Error finding a start node for Focus Mode.", variant: "destructive" });
-        }
-    } else { 
-        setIsFocusModeActive(false);
-        setIsLayoutLocked(false); 
-        setFocusModeStartNodeId(null);
-        setFocusModeExpandedNodeIds(new Set());
-        setFocusModeVisibleNodeIds(new Set()); 
-    }
-  }, [
-    isFocusModeActive, nodes, getNodeDimension, toast, clearNodeInteractionStates, 
-    viewport.containerWidth, viewport.containerHeight, viewport.setViewportScale, viewport.setViewportOffset,
-    setIsFocusModeActive, setIsLayoutLocked, setFocusModeStartNodeId, setFocusModeExpandedNodeIds, setFocusModeVisibleNodeIds, setInteractionMode
-  ]);
 
   useEffect(() => {
     if (!isFocusModeActive || !focusModeStartNodeId || !nodes.length) {
@@ -345,19 +351,19 @@ export default function Home() {
     if (startNodeExists) {
         newVisibleNodes.add(focusModeStartNodeId);
     } else {
-        handleToggleFocusMode(false); // If start node is deleted/missing, turn off focus mode.
+        handleToggleFocusMode(false); 
         return;
     }
 
     focusModeExpandedNodeIds.forEach(expandedId => {
-        if (nodes.find(n => n.id === expandedId)) { // Check if expanded node still exists
+        if (nodes.find(n => n.id === expandedId)) { 
             newVisibleNodes.add(expandedId);
             const expandedNode = nodes.find(n => n.id === expandedId);
             if (expandedNode) {
                 edges.forEach(edge => {
-                    if (edge.sourceNodeId === expandedId && nodes.find(n => n.id === edge.targetNodeId)) { // Check if target neighbor exists
+                    if (edge.sourceNodeId === expandedId && nodes.find(n => n.id === edge.targetNodeId)) { 
                         newVisibleNodes.add(edge.targetNodeId);
-                    } else if (edge.targetNodeId === expandedId && nodes.find(n => n.id === edge.sourceNodeId)) { // Check if source neighbor exists
+                    } else if (edge.targetNodeId === expandedId && nodes.find(n => n.id === edge.sourceNodeId)) { 
                         newVisibleNodes.add(edge.sourceNodeId);
                     }
                 });
@@ -366,15 +372,9 @@ export default function Home() {
     });
     setFocusModeVisibleNodeIds(newVisibleNodes);
 
-    // Auto-turn off focus mode if only the start node is left and no other expanded nodes are present
-    // or if the start node itself gets un-expanded (which shouldn't happen by click but good for robustness)
     if(focusModeExpandedNodeIds.size === 0 && isFocusModeActive){
       handleToggleFocusMode(false);
     } else if (focusModeExpandedNodeIds.size === 1 && focusModeExpandedNodeIds.has(focusModeStartNodeId) && newVisibleNodes.size === 1 && isFocusModeActive) {
-      // This condition means only the start node is "expanded" and no neighbors are shown (implies it has no connections or they were all un-toggled)
-      // The UX for this specific state might need more thought - for now, it remains active with just the start node.
-      // To auto-disable if start node has no visible connections:
-      // if (newVisibleNodes.size === 1) handleToggleFocusMode(false); 
     }
 
   }, [isFocusModeActive, focusModeStartNodeId, focusModeExpandedNodeIds, nodes, edges, handleToggleFocusMode]);
@@ -400,7 +400,7 @@ export default function Home() {
 
     let nodesToSet = loadedNodes;
     
-    if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && viewport.containerWidth > 0 && viewport.containerHeight > 0) {
+    if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && viewportRef.current && viewportRef.current.containerWidth > 0 && viewportRef.current.containerHeight > 0) {
       clearNodeInteractionStates();
       setInteractionMode('none'); 
 
@@ -422,9 +422,9 @@ export default function Home() {
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
-        viewport.setViewportOffset(
-            Math.round((viewport.containerWidth / 2) - (mainNodeDimension / 2) * viewport.scale),
-            Math.round((viewport.containerHeight / 2) - (mainNodeDimension / 2) * viewport.scale)
+        viewportRef.current.setViewportOffset(
+            Math.round((viewportRef.current.containerWidth / 2) - (mainNodeDimension / 2) * viewportRef.current.scale),
+            Math.round((viewportRef.current.containerHeight / 2) - (mainNodeDimension / 2) * viewportRef.current.scale)
         );
       }
       setInitialLoadAndCenteringComplete(true);
@@ -433,16 +433,15 @@ export default function Home() {
     setEdges(loadedEdgesData);
     
   }, [
-      viewport.containerWidth, viewport.containerHeight, viewport.scale, viewport.setViewportOffset, 
-      getNodeDimension, initialLoadAndCenteringComplete, 
+      initialLoadAndCenteringComplete, 
       setNodes, setEdges, setInitialLoadAndCenteringComplete, 
       clearNodeInteractionStates,
-      setInteractionMode 
+      setInteractionMode,
+      getNodeDimension // Added getNodeDimension
     ]);
 
 
   useEffect(() => {
-    // Trigger initial data load once viewport dimensions are known and initial centering hasn't happened.
     if (!initialLoadAndCenteringComplete && viewport.containerWidth > 0 && viewport.containerHeight > 0) {
         loadInitialData();
     }
@@ -621,12 +620,12 @@ export default function Home() {
     
     if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
 
-    clearNodeInteractionStates(); // From useNodeInteractions
+    clearNodeInteractionStates(); 
 
     if (event.type.startsWith('touch')) {
         const touchEvent = event as React.TouchEvent;
         if (touchEvent.touches.length === 2) {
-            clearNodeInteractionStates(); // Ensure node interactions are cleared before pinch
+            clearNodeInteractionStates(); 
             setInteractionMode('pinchZooming');
             const initialDistance = getDistance(touchEvent.touches);
             const screenMid = getMidpoint(touchEvent.touches);
@@ -709,9 +708,8 @@ export default function Home() {
             setPinchStartData(null);
         }
       } else if (interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeIdFromHook) {
-          // If the node drag during layout lock didn't transition to panning, it means it was a click.
           const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeIdFromHook);
-          if (nodeToEdit) openEditNodeDialog(nodeToEdit); // This was missing previously
+          if (nodeToEdit) openEditNodeDialog(nodeToEdit); 
           setInteractionMode('none');
           clearNodeInteractionStates(); 
           setPanStartCoords(null);
@@ -730,7 +728,7 @@ export default function Home() {
             setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
             setIsCreateNodeDialogOpen(true);
         }
-        setInteractionMode('none'); // Reset after check
+        setInteractionMode('none'); 
         setQuickPressStartInfo(null); 
       }
       
@@ -765,7 +763,7 @@ export default function Home() {
     };
   }, [
       activeInteractionNodeIdFromHook, interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart, pinchStartData,
-      viewport.scale, viewport.offsetX, viewport.offsetY, // from viewport manager
+      viewport.scale, viewport.offsetX, viewport.offsetY, 
       isLayoutLocked, isFocusModeActive,
       handleNodeMove, handleNodeEnd, openEditNodeDialog, setIsCreateNodeDialogOpen, setPendingNodeCreationCoords,
       clearNodeInteractionStates, setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, 
@@ -773,7 +771,7 @@ export default function Home() {
   ]);
 
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
-    if (currentNodes.length < 2 || viewport.containerWidth === 0 || isLayoutLocked) return currentNodes; // Paused if layout is locked
+    if (currentNodes.length < 2 || viewport.containerWidth === 0 || isLayoutLocked) return currentNodes; 
     let newNodes = currentNodes.map(n => ({ ...n })); 
     for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
       let systemMoved = false;
@@ -817,7 +815,7 @@ export default function Home() {
       if (!systemMoved && iter > 0) break; 
     }
     return newNodes;
-  }, [getNodeDimension, viewport.containerWidth, isLayoutLocked]); // Added isLayoutLocked dependency
+  }, [getNodeDimension, viewport.containerWidth, isLayoutLocked]); 
 
 
   useEffect(() => { 
@@ -838,7 +836,7 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeIdFromHook, applyRepulsion, viewport.containerWidth, interactionMode, setNodes, isLayoutLocked]); // Added isLayoutLocked
+  }, [nodes, activeInteractionNodeIdFromHook, applyRepulsion, viewport.containerWidth, interactionMode, setNodes, isLayoutLocked]); 
 
   useEffect(() => { 
     if (isLayoutLocked || nodes.length < 2 || viewport.containerWidth === 0 || !activeInteractionNodeIdFromHook || interactionMode !== 'none') return; 
@@ -863,7 +861,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeIdFromHook, applyRepulsion, viewport.containerWidth, interactionMode, setNodes, isLayoutLocked]); // Added isLayoutLocked
+  }, [nodes, activeInteractionNodeIdFromHook, applyRepulsion, viewport.containerWidth, interactionMode, setNodes, isLayoutLocked]); 
 
 
   const [isClient, setIsClient] = useState(false);
@@ -944,9 +942,10 @@ export default function Home() {
     setIsSearchDialogOpen(false);
     setSearchQuery(""); 
     const nodeDimension = getNodeDimension(node.type);
-    const targetOffsetX = Math.round((viewport.containerWidth / 2) - (node.x + nodeDimension / 2) * 1.0); 
-    const targetOffsetY = Math.round((viewport.containerHeight / 2) - (node.y + nodeDimension / 2) * 1.0); 
-    viewport.setViewportOffset(targetOffsetX, targetOffsetY);
+    viewport.setViewportOffset(
+      Math.round((viewport.containerWidth / 2) - (node.x + nodeDimension / 2) * 1.0),
+      Math.round((viewport.containerHeight / 2) - (node.y + nodeDimension / 2) * 1.0)
+    );
     viewport.setViewportScale(1.0); 
   };
   
@@ -985,13 +984,13 @@ export default function Home() {
   }, [isClient, isFocusModeActive, edges, focusModeVisibleNodeIds]);
 
 
-  const getDistance = (touches: TouchList) => {
+  const getDistance = (touches: React.TouchList) => {
     const dx = touches[0].clientX - touches[1].clientX;
     const dy = touches[0].clientY - touches[1].clientY;
     return Math.sqrt(dx * dx + dy * dy);
   };
 
-  const getMidpoint = (touches: TouchList) => {
+  const getMidpoint = (touches: React.TouchList) => {
     return {
       x: (touches[0].clientX + touches[1].clientX) / 2,
       y: (touches[0].clientY + touches[1].clientY) / 2,
@@ -1027,7 +1026,7 @@ export default function Home() {
               <Label htmlFor="scale-slider" className="text-sm text-right col-span-1">Zoom: {isClient ? Math.round(viewport.scale * 100) : 100}%</Label>
               <Slider
                   id="scale-slider"
-                  min={viewport.LINEAR_SLIDER_MIN} max={viewport.LINEAR_SLIDER_MAX} step={1} 
+                  min={isClient ? viewport.LINEAR_SLIDER_MIN : 0} max={isClient ? viewport.LINEAR_SLIDER_MAX : 100} step={1} 
                   value={[isClient ? Math.round(viewport.linearScaleValue) : 50]} 
                   onValueChange={(value) => viewport.handleScaleSliderChange(value[0])}
                   className="col-span-3"
@@ -1144,7 +1143,7 @@ export default function Home() {
                 style={nodeStyles}
                 onMouseDown={(e) => { 
                   if (interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeIdFromHook === node.id) return; 
-                  if (activeInteractionNodeIdFromHook && activeInteractionNodeIdFromHook !== node.id) return; 
+                  if (activeInteractionNodeIdFromHook && activeInteractionNodeId !== node.id) return; 
                   handleNodeInteractionStart(e, node); 
                 }}
                 onTouchStart={(e) => { 
@@ -1310,3 +1309,4 @@ export default function Home() {
   );
 }
 
+    

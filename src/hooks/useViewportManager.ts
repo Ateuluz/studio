@@ -6,8 +6,8 @@ import React, { useState, useEffect, useCallback, RefObject } from 'react';
 
 const LOG_SCALE_MIN = 0.02;
 const LOG_SCALE_MAX = 1.2;
-const LINEAR_SLIDER_MIN = 0;
-const LINEAR_SLIDER_MAX = 100;
+const LINEAR_SLIDER_MIN_CONST = 0; // Renamed to avoid conflict
+const LINEAR_SLIDER_MAX_CONST = 100; // Renamed to avoid conflict
 
 // Helper functions for logarithmic scale conversion
 function linearToLogScale(
@@ -17,11 +17,12 @@ function linearToLogScale(
   logMin: number,
   logMax: number
 ): number {
-  if (logMin <= 0 || logMax <= 0) return logMin;
+  if (logMin <= 0 || logMax <= 0 || !isFinite(logMin) || !isFinite(logMax)) return logMin;
   if (linearMin === linearMax) return logMin;
   if (logMin === logMax) return logMin;
 
   const G = logMax / logMin;
+  if (G <=0 || !isFinite(G)) return logMin; // Avoid Math.log of non-positive
   const exponent = (linearValue - linearMin) / (linearMax - linearMin);
   return logMin * Math.pow(G, exponent);
 }
@@ -33,13 +34,13 @@ function logToLinearScale(
   linearMin: number,
   linearMax: number
 ): number {
-  if (logValue <= 0 || logMin <= 0 || logMax <= 0) return linearMin;
+  if (logValue <= 0 || logMin <= 0 || logMax <= 0 || !isFinite(logValue) || !isFinite(logMin) || !isFinite(logMax) ) return linearMin;
   const clampedLogValue = Math.max(logMin, Math.min(logMax, logValue));
   if (logMin === logMax) return linearMin;
   const G = logMax / logMin;
   if (G === 1 || G <= 0 || !isFinite(G)) return linearMin;
   const logRatio = clampedLogValue / logMin;
-  if (logRatio <= 0 || !isFinite(logRatio)) return linearMin;
+  if (logRatio <= 0 || !isFinite(logRatio)) return linearMin; // Avoid Math.log of non-positive
   const logG = Math.log(G);
   if (logG === 0 || !isFinite(logG)) return linearMin;
   return linearMin + (linearMax - linearMin) * (Math.log(logRatio) / logG);
@@ -50,9 +51,9 @@ interface UseViewportManagerProps {
   nodes: Node[];
   getNodeDimension: (nodeOrType: Node | Node['type']) => number;
   activeInteractionNodeId: string | null;
-  interactionMode: string; // Consider a more specific type if available
+  interactionMode: string; 
   initialScale?: number;
-  onDimensionsReady?: (width: number, height: number) => void; // Callback when dimensions are first set
+  onDimensionsReady?: (width: number, height: number) => void; 
 }
 
 export function useViewportManager({
@@ -74,34 +75,26 @@ export function useViewportManager({
   const [panXSliderLimits, setPanXSliderLimits] = useState({ min: -1000, max: 1000 });
   const [panYSliderLimits, setPanYSliderLimits] = useState({ min: -1000, max: 1000 });
 
-  // Effect for measuring container dimensions
   useEffect(() => {
     let initialDimensionsSet = false;
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        setContainerWidth(rect.width);
-        setContainerHeight(rect.height);
-        if (onDimensionsReady && !initialDimensionsSet) {
-          onDimensionsReady(rect.width, rect.height);
-          initialDimensionsSet = true;
-        }
-      }
-    }
-    const handleResize = () => {
+    const measure = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
-           setContainerWidth(rect.width);
-           setContainerHeight(rect.height);
+          setContainerWidth(rect.width);
+          setContainerHeight(rect.height);
+          if (onDimensionsReady && !initialDimensionsSet) {
+            onDimensionsReady(rect.width, rect.height);
+            initialDimensionsSet = true;
+          }
         }
       }
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    measure(); // Initial measure
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
   }, [containerRef, onDimensionsReady]);
 
-  // Effect for calculating pan limits
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
     if (!containerRef.current || containerWidth === 0 || containerHeight === 0 || scale === 0 || !isFinite(scale)) return;
@@ -128,18 +121,11 @@ export function useViewportManager({
     const contentWorldWidth = contentMaxXWorld - contentMinXWorld;
     const contentWorldHeight = contentMaxYWorld - contentMinYWorld;
 
-    let targetOffsetX, targetOffsetY;
-    if (contentWorldWidth * scale <= containerWidth) {
-      targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
-    } else {
-      targetOffsetX = offsetX; // Use current offsetX if content is wider than viewport
-    }
-    if (contentWorldHeight * scale <= containerHeight) {
-      targetOffsetY = (containerHeight / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
-    } else {
-      targetOffsetY = offsetY; // Use current offsetY if content is taller than viewport
-    }
-
+    let targetOffsetXIfCentered, targetOffsetYIfCentered;
+    
+    targetOffsetXIfCentered = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
+    targetOffsetYIfCentered = (containerHeight / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
+    
     const minOffsetX = containerWidth - (contentMaxXWorld * scale) - paddingXWorld * scale;
     const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
     const minOffsetY = containerHeight - (contentMaxYWorld * scale) - paddingYWorld * scale;
@@ -148,15 +134,15 @@ export function useViewportManager({
     let finalMinOffsetX, finalMaxOffsetX, finalMinOffsetY, finalMaxOffsetY;
 
     if (contentWorldWidth * scale <= containerWidth) {
-      finalMinOffsetX = targetOffsetX;
-      finalMaxOffsetX = targetOffsetX;
+      finalMinOffsetX = targetOffsetXIfCentered;
+      finalMaxOffsetX = targetOffsetXIfCentered;
     } else {
       finalMinOffsetX = minOffsetX;
       finalMaxOffsetX = maxOffsetX;
     }
     if (contentWorldHeight * scale <= containerHeight) {
-      finalMinOffsetY = targetOffsetY;
-      finalMaxOffsetY = targetOffsetY;
+      finalMinOffsetY = targetOffsetYIfCentered;
+      finalMaxOffsetY = targetOffsetYIfCentered;
     } else {
       finalMinOffsetY = minOffsetY;
       finalMaxOffsetY = maxOffsetY;
@@ -168,9 +154,8 @@ export function useViewportManager({
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
 
-  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode, containerRef]); // offsetX, offsetY removed
+  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode, containerRef]);
 
-  // Effect for clamping offsetX
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
     const currentVal = offsetX;
@@ -179,14 +164,13 @@ export function useViewportManager({
     const maxLimit = panXSliderLimits.max;
     let clampedRoundedVal = Math.max(minLimit, Math.min(maxLimit, roundedVal));
 
-    if (!isFinite(clampedRoundedVal)) clampedRoundedVal = 0; // Fallback if limits are non-finite
+    if (!isFinite(clampedRoundedVal)) clampedRoundedVal = 0; 
 
     if (offsetX !== clampedRoundedVal && isFinite(clampedRoundedVal)) {
       setOffsetX(clampedRoundedVal);
     }
   }, [panXSliderLimits, offsetX, activeInteractionNodeId, interactionMode]);
 
-  // Effect for clamping offsetY
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
     const currentVal = offsetY;
@@ -195,7 +179,7 @@ export function useViewportManager({
     const maxLimit = panYSliderLimits.max;
     let clampedRoundedVal = Math.max(minLimit, Math.min(maxLimit, roundedVal));
     
-    if (!isFinite(clampedRoundedVal)) clampedRoundedVal = 0; // Fallback
+    if (!isFinite(clampedRoundedVal)) clampedRoundedVal = 0; 
 
     if (offsetY !== clampedRoundedVal && isFinite(clampedRoundedVal)) {
       setOffsetY(clampedRoundedVal);
@@ -212,7 +196,7 @@ export function useViewportManager({
   }, [offsetX, offsetY, scale, containerRef]);
 
   const handleScaleSliderChange = useCallback((linearValue: number) => {
-    const newScaleCandidate = linearToLogScale(linearValue, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
+    const newScaleCandidate = linearToLogScale(linearValue, LINEAR_SLIDER_MIN_CONST, LINEAR_SLIDER_MAX_CONST, LOG_SCALE_MIN, LOG_SCALE_MAX);
     const finalNewScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScaleCandidate));
 
     if (containerRef.current && containerWidth > 0 && containerHeight > 0 && Math.abs(finalNewScale - scale) > 0.0001 && isFinite(finalNewScale) && finalNewScale > 0) {
@@ -233,18 +217,18 @@ export function useViewportManager({
   }, [containerRef, containerWidth, containerHeight, scale, screenToWorld]);
   
   const handlePanXSliderChange = useCallback((value: number) => {
-    setOffsetX(value);
+    setOffsetX(Math.round(value));
   }, []);
 
   const handlePanYSliderChange = useCallback((value: number) => {
-    setOffsetY(value);
+    setOffsetY(Math.round(value));
   }, []);
 
   const setViewportScale = useCallback((newScale: number, pinchMidpointScreen?: {x: number, y: number}) => {
       const clampedNewScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale));
        if (containerRef.current && containerWidth > 0 && containerHeight > 0 && pinchMidpointScreen) {
             const rect = containerRef.current.getBoundingClientRect();
-            const worldPointAtPinchMidpoint = screenToWorld(pinchMidpointScreen.x, pinchMidpointScreen.y); // Use current scale to get world point
+            const worldPointAtPinchMidpoint = screenToWorld(pinchMidpointScreen.x, pinchMidpointScreen.y); 
 
             const newOffsetX = pinchMidpointScreen.x - rect.left - (worldPointAtPinchMidpoint.x * clampedNewScale);
             const newOffsetY = pinchMidpointScreen.y - rect.top - (worldPointAtPinchMidpoint.y * clampedNewScale);
@@ -258,7 +242,6 @@ export function useViewportManager({
   }, [containerRef, containerWidth, containerHeight, screenToWorld]);
 
   const setViewportOffset = useCallback((newOffsetX: number, newOffsetY: number) => {
-    // Clamping will be handled by the useEffects watching panX/YSliderLimits
     setOffsetX(Math.round(newOffsetX));
     setOffsetY(Math.round(newOffsetY));
   }, []);
@@ -278,9 +261,12 @@ export function useViewportManager({
     handlePanYSliderChange,
     setViewportScale,
     setViewportOffset,
-    linearScaleValue: Math.round(logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)),
-    LOG_SCALE_MIN, // Exporting for use elsewhere if needed
-    LOG_SCALE_MAX, // Exporting for use elsewhere if needed
+    linearScaleValue: Math.round(logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN_CONST, LINEAR_SLIDER_MAX_CONST)),
+    LOG_SCALE_MIN, 
+    LOG_SCALE_MAX,
+    LINEAR_SLIDER_MIN: LINEAR_SLIDER_MIN_CONST, // Exporting renamed const
+    LINEAR_SLIDER_MAX: LINEAR_SLIDER_MAX_CONST  // Exporting renamed const
   };
 }
 
+    
