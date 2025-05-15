@@ -287,6 +287,7 @@ export default function Home() {
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
+        setActiveInteractionNodeId(null); 
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
@@ -304,8 +305,6 @@ export default function Home() {
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
-        
-        setActiveInteractionNodeId(null); 
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
@@ -348,7 +347,7 @@ export default function Home() {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return; 
     if (!containerRef.current || containerWidth === 0 || scale === 0 || !isFinite(scale)) return;
 
-    const nodesToConsider = nodes;
+    const nodesToConsider = nodes.filter(n => n.id !== activeInteractionNodeId);
 
     let contentMinXWorld = 0, contentMaxXWorld = 0, contentMinYWorld = 0, contentMaxYWorld = 0;
 
@@ -358,13 +357,13 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
-      const initialWorldViewCenterX = (-offsetX / scale) + (containerWidth / (2 * scale));
-      const initialWorldViewCenterY = (-offsetY / scale) + (CONTAINER_HEIGHT_PX / (2 * scale));
-      const defaultSpan = Math.max(containerWidth, CONTAINER_HEIGHT_PX) / (2 * scale) ; 
-      contentMinXWorld = initialWorldViewCenterX - defaultSpan / 2;
-      contentMaxXWorld = initialWorldViewCenterX + defaultSpan / 2;
-      contentMinYWorld = initialWorldViewCenterY - defaultSpan / 2;
-      contentMaxYWorld = initialWorldViewCenterY + defaultSpan / 2;
+      // Empty world: Define a default "content" area centered around world (0,0)
+      const defaultContentWorldWidth = containerWidth / scale;
+      const defaultContentWorldHeight = CONTAINER_HEIGHT_PX / scale;
+      contentMinXWorld = -defaultContentWorldWidth / 2;
+      contentMaxXWorld = defaultContentWorldWidth / 2;
+      contentMinYWorld = -defaultContentWorldHeight / 2;
+      contentMaxYWorld = defaultContentWorldHeight / 2;
     }
 
     const paddingXWorld = (containerWidth / 2) / scale; 
@@ -378,6 +377,8 @@ export default function Home() {
     if (contentWorldWidth * scale <= containerWidth) {
         targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
     } else { 
+        // This indicates that offsetX is not changed if content is wider than container
+        // But if it's already out of bounds, it should be brought back
         targetOffsetX = offsetX; 
     }
 
@@ -416,7 +417,7 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY, interactionMode]);
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, interactionMode]);
 
   // Effect to clamp offsetX
   useEffect(() => {
@@ -726,7 +727,6 @@ export default function Home() {
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
-            // Explicitly clear node-specific interaction states when pinch starts
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
