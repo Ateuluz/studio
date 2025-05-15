@@ -321,18 +321,20 @@ export default function Home() {
             return;
         }
         setIsFocusModeActive(true);
-        setIsLayoutLocked(true);
+        setIsLayoutLocked(true); // Focus mode implies layout lock
 
         const mainNode = nodes.find(n => n.tags.includes("Main"));
         const startNode = mainNode || nodes[0]; 
 
         if (startNode) {
             setFocusModeStartNodeId(startNode.id);
-            setFocusModeExpandedNodeIds(new Set([startNode.id]));
+            setFocusModeExpandedNodeIds(new Set([startNode.id])); // Start node is initially expanded
             
+            // Center view on startNode
             const nodeDimension = getNodeDimension(startNode.type);
-            const targetScale = 1.0; 
+            const targetScale = 1.0; // Zoom to 100%
             
+            // Calculate offsets to center the startNode
             const targetOffsetX = (containerWidth / 2) - (startNode.x + nodeDimension / 2) * targetScale;
             const targetOffsetY = (containerHeight / 2) - (startNode.y + nodeDimension / 2) * targetScale;
             
@@ -340,16 +342,17 @@ export default function Home() {
             setOffsetX(Math.round(targetOffsetX));
             setOffsetY(Math.round(targetOffsetY));
         } else { 
+            // Should not happen if nodes.length > 0, but as a fallback
             setIsFocusModeActive(false);
-            setIsLayoutLocked(false);
+            setIsLayoutLocked(false); // Revert layout lock if activation failed
             toast({ title: "Focus Mode", description: "Error finding a start node for Focus Mode.", variant: "destructive" });
         }
     } else { // Deactivating Focus Mode
         setIsFocusModeActive(false);
-        setIsLayoutLocked(false); 
+        setIsLayoutLocked(false); // For now, always unlock. Can be refined to restore previous state.
         setFocusModeStartNodeId(null);
         setFocusModeExpandedNodeIds(new Set());
-        setFocusModeVisibleNodeIds(new Set());
+        setFocusModeVisibleNodeIds(new Set()); // Clear visible nodes immediately
     }
   }, [isFocusModeActive, nodes, getNodeDimension, containerWidth, containerHeight, setIsFocusModeActive, setIsLayoutLocked, setFocusModeStartNodeId, setFocusModeExpandedNodeIds, setFocusModeVisibleNodeIds, setScale, setOffsetX, setOffsetY, toast]);
 
@@ -447,12 +450,14 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
-      const defaultContentWorldWidth = (containerWidth || 1) / Math.max(scale,0.01);
-      const defaultContentWorldHeight = (containerHeight || 1) / Math.max(scale,0.01);
-      contentMinXWorld = -defaultContentWorldWidth / 2;
-      contentMaxXWorld = defaultContentWorldWidth / 2;
-      contentMinYWorld = -defaultContentWorldHeight / 2;
-      contentMaxYWorld = defaultContentWorldHeight / 2;
+      // Default content area if no nodes or all nodes are filtered out
+      // Based on a viewport-sized area centered at world (0,0)
+      const defaultWorldWidth = (containerWidth || 1) / Math.max(scale, 0.01); // Use 1 if containerWidth is 0 to avoid NaN
+      const defaultWorldHeight = (containerHeight || 1) / Math.max(scale, 0.01); // Use 1 if containerHeight is 0
+      contentMinXWorld = -defaultWorldWidth / 2;
+      contentMaxXWorld = defaultWorldWidth / 2;
+      contentMinYWorld = -defaultWorldHeight / 2;
+      contentMaxYWorld = defaultWorldHeight / 2;
     }
 
     const paddingXWorld = (containerWidth / 2) / Math.max(scale, 0.01); 
@@ -463,18 +468,20 @@ export default function Home() {
     
     let targetOffsetX, targetOffsetY;
 
-    if (contentWorldWidth * scale <= containerWidth) {
+    // If content (plus padding) is smaller than viewport, center it
+    if (contentWorldWidth * scale <= containerWidth) { // Content fits horizontally
         targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
-    } else { 
-        targetOffsetX = offsetX; 
+    } else { // Content is wider than viewport, allow panning
+        targetOffsetX = offsetX; // Keep current offsetX as a base for clamping
     }
 
-    if (contentWorldHeight * scale <= containerHeight) {
+    if (contentWorldHeight * scale <= containerHeight) { // Content fits vertically
         targetOffsetY = (containerHeight / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
-    } else { 
-        targetOffsetY = offsetY; 
+    } else { // Content is taller than viewport, allow panning
+        targetOffsetY = offsetY; // Keep current offsetY as a base for clamping
     }
 
+    // Calculate min/max pan offsets
     const minOffsetX = containerWidth - (contentMaxXWorld * scale) - paddingXWorld * scale;
     const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
     const minOffsetY = containerHeight - (contentMaxYWorld * scale) - paddingYWorld * scale;
@@ -484,7 +491,7 @@ export default function Home() {
 
     if (contentWorldWidth * scale <= containerWidth) {
         finalMinOffsetX = targetOffsetX;
-        finalMaxOffsetX = targetOffsetX;
+        finalMaxOffsetX = targetOffsetX; // Lock X panning
     } else {
         finalMinOffsetX = minOffsetX;
         finalMaxOffsetX = maxOffsetX;
@@ -492,7 +499,7 @@ export default function Home() {
 
     if (contentWorldHeight * scale <= containerHeight) {
         finalMinOffsetY = targetOffsetY;
-        finalMaxOffsetY = targetOffsetY;
+        finalMaxOffsetY = targetOffsetY; // Lock Y panning
     } else {
         finalMinOffsetY = minOffsetY;
         finalMaxOffsetY = maxOffsetY;
@@ -719,6 +726,10 @@ const handleNodeInteractionStart = (
   event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
   node: Node
 ) => {
+  setInteractionMode('none'); 
+  setPanStartCoords(null);
+  setQuickPressStartInfo(null);
+  setPinchStartData(null);
   
   if (isLayoutLocked) {
     event.stopPropagation(); 
@@ -736,10 +747,6 @@ const handleNodeInteractionStart = (
     return; 
   }
 
-  setInteractionMode('none');
-  setPanStartCoords(null);
-  setQuickPressStartInfo(null);
-  setPinchStartData(null);
 
   if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
   const point = 'touches' in event ? event.touches[0] : event;
@@ -992,89 +999,103 @@ const handleNodeInteractionStart = (
             break; 
           }
         }
+        
+        const wasDragging = isDraggingForReposition;
+        const wasLinkingFromPreview = !!(linkingLinePreview && linkingSourceNodeId);
+        const wasLinkingFromPressHoldNoDrag = isLinkingModeActive && !linkingLinePreview;
+        const isSimpleClick = !wasDragging && !wasLinkingFromPreview && !wasLinkingFromPressHoldNoDrag;
 
         if (isFocusModeActive) {
-            const clickedNode = nodes.find(n => n.id === activeInteractionNodeId);
-            if (clickedNode && focusModeVisibleNodeIds.has(clickedNode.id)) {
-                if (clickedNode.id !== focusModeStartNodeId) {
-                    setFocusModeExpandedNodeIds(prevExpandedIds => {
-                        const newExpandedIds = new Set(prevExpandedIds);
-                        if (newExpandedIds.has(clickedNode.id)) {
-                            newExpandedIds.delete(clickedNode.id);
-                        } else {
-                            newExpandedIds.add(clickedNode.id);
-                        }
-                        return newExpandedIds;
-                    });
+            if (isSimpleClick) {
+                const clickedNode = nodes.find(n => n.id === activeInteractionNodeId);
+                if (clickedNode && focusModeVisibleNodeIds.has(clickedNode.id)) {
+                    if (clickedNode.id !== focusModeStartNodeId) {
+                        setFocusModeExpandedNodeIds(prevExpandedIds => {
+                            const newExpandedIds = new Set(prevExpandedIds);
+                            if (newExpandedIds.has(clickedNode.id)) {
+                                newExpandedIds.delete(clickedNode.id);
+                            } else {
+                                newExpandedIds.add(clickedNode.id);
+                            }
+                            return newExpandedIds;
+                        });
+                    }
                 }
             }
-        } else if (linkingLinePreview && linkingSourceNodeId) { 
-          const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
-          if(sourceNode){ 
-              if (targetNodeUnderneath) { 
-                  const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
+            // In Focus Mode, node editing is disabled. Dragging for repositioning or linking might still be allowed
+            // but will not open standard edit dialogs. If a link was made, dialogs open.
+            if (!isCreateEdgeDialogOpen && !isEditEdgeDialogOpen) {
+                setActiveInteractionNodeId(null);
+            }
+        } else { // Not in Focus Mode
+            if (wasLinkingFromPreview) { 
+              const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
+              if(sourceNode){ 
+                  if (targetNodeUnderneath) { 
+                      const existingEdge = findExistingEdge(linkingSourceNodeId!, targetNodeUnderneath.id);
+                      if (existingEdge) {
+                          setEditingEdge(existingEdge);
+                          setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
+                          setIsEditEdgeDialogOpen(true);
+                      } else {
+                          setNewEdgeDataSourceNodeId(linkingSourceNodeId!);
+                          setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
+                          setNewEdgeTagsInput("");
+                          setIsCreateEdgeDialogOpen(true);
+                      }
+                  } else { 
+                      const updatedNodes = nodes.map(n => {
+                          if (n.id === linkingSourceNodeId) {
+                              const nodeDim = getNodeDimension(n);
+                              let newX = worldMouseReleasePos.x - nodeDim / 2;
+                              let newY = worldMouseReleasePos.y - nodeDim / 2;
+                              return { ...n, x: newX, y: newY };
+                          }
+                          return n;
+                      });
+                      setNodes(updatedNodes);
+                      await saveNodesToFileCallback(updatedNodes); 
+                  }
+              }
+            } else if (wasDragging) { 
+              const draggedNodeId = activeInteractionNodeId; 
+              if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { 
+                  const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
                   if (existingEdge) {
                       setEditingEdge(existingEdge);
                       setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
                       setIsEditEdgeDialogOpen(true);
                   } else {
-                      setNewEdgeDataSourceNodeId(linkingSourceNodeId);
+                      setNewEdgeDataSourceNodeId(draggedNodeId);
                       setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
                       setNewEdgeTagsInput("");
                       setIsCreateEdgeDialogOpen(true);
                   }
-              } else { 
-                  const updatedNodes = nodes.map(n => {
-                      if (n.id === linkingSourceNodeId) {
-                          const nodeDim = getNodeDimension(n);
-                          let newX = worldMouseReleasePos.x - nodeDim / 2;
-                          let newY = worldMouseReleasePos.y - nodeDim / 2;
-                          return { ...n, x: newX, y: newY };
-                      }
-                      return n;
-                  });
-                  setNodes(updatedNodes);
-                  await saveNodesToFileCallback(updatedNodes); 
               }
-          }
-        } else if (isDraggingForReposition) { 
-          const draggedNodeId = activeInteractionNodeId; 
-          if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { 
-              const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
-              if (existingEdge) {
-                  setEditingEdge(existingEdge);
-                  setEditEdgeTagsInput(formatTagsWithDates(existingEdge.tags));
-                  setIsEditEdgeDialogOpen(true);
-              } else {
-                  setNewEdgeDataSourceNodeId(draggedNodeId);
-                  setNewEdgeDataTargetNodeId(targetNodeUnderneath.id);
-                  setNewEdgeTagsInput("");
-                  setIsCreateEdgeDialogOpen(true);
-              }
-          }
-          await saveNodesToFileCallback(nodes); 
-        } else if (isLinkingModeActive) { 
-          // Press-hold without drag - no specific action here now as search bar is separate
-        } else if (!isDraggingForReposition && !isLinkingModeActive) { // Simple Click
-           if (!isFocusModeActive) { 
+              await saveNodesToFileCallback(nodes); 
+            } else if (wasLinkingFromPressHoldNoDrag) { 
+              // This case might need re-evaluation or could be removed if Focus Mode handles all non-drag node presses.
+              // For now, it's less likely to be hit if simple clicks are handled first or if Focus Mode is active.
+              // console.log("Press-hold completed without drag, not in focus mode - potentially open search or other action.");
+            } else if (isSimpleClick) { // Simple Click when NOT in focus mode
                 const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
                 if (nodeToEdit) openEditNodeDialog(nodeToEdit);
-           }
+            }
         }
 
-        if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !isFocusModeActive) {
-          setActiveInteractionNodeId(null);
-        } else if (isFocusModeActive) {
-            setActiveInteractionNodeId(null); 
+        // Reset active node unless a dialog that relies on it (like EditNodeDialog) is open
+        if (!isEditNodeDialogOpen && !isCreateEdgeDialogOpen && !isEditEdgeDialogOpen) {
+           setActiveInteractionNodeId(null);
         }
+        
         setInteractionStartPos(null);
         setDragOffset(null);
         setIsDraggingForReposition(false);
         setIsLinkingModeActive(false);
         setLinkingSourceNodeId(null);
         setLinkingLinePreview(null);
-      } 
-      else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
+
+      } else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
         const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
         if (!point) {
             setInteractionMode('none');
@@ -1095,7 +1116,6 @@ const handleNodeInteractionStart = (
         }
         setQuickPressStartInfo(null); 
       }
-
       
       if (interactionMode !== 'none' && interactionMode !== 'pinchZooming' && !(interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeId)) { 
           setInteractionMode('none');
@@ -1273,19 +1293,19 @@ const handleNodeInteractionStart = (
     if (startNodeExists) {
         newVisibleNodes.add(focusModeStartNodeId);
     } else {
-        handleToggleFocusMode(false); // Start node was deleted or became invalid
+        handleToggleFocusMode(false); 
         return;
     }
 
     focusModeExpandedNodeIds.forEach(expandedId => {
-        if (nodes.find(n => n.id === expandedId)) { // Ensure expanded node still exists
+        if (nodes.find(n => n.id === expandedId)) { 
             newVisibleNodes.add(expandedId);
             const expandedNode = nodes.find(n => n.id === expandedId);
             if (expandedNode) {
                 edges.forEach(edge => {
-                    if (edge.sourceNodeId === expandedId && nodes.find(n => n.id === edge.targetNodeId)) { // Ensure target node exists
+                    if (edge.sourceNodeId === expandedId && nodes.find(n => n.id === edge.targetNodeId)) { 
                         newVisibleNodes.add(edge.targetNodeId);
-                    } else if (edge.targetNodeId === expandedId && nodes.find(n => n.id === edge.sourceNodeId)) { // Ensure source node exists
+                    } else if (edge.targetNodeId === expandedId && nodes.find(n => n.id === edge.sourceNodeId)) { 
                         newVisibleNodes.add(edge.sourceNodeId);
                     }
                 });
@@ -1294,8 +1314,6 @@ const handleNodeInteractionStart = (
     });
     setFocusModeVisibleNodeIds(newVisibleNodes);
 
-    // Automatically turn off focus mode if only the start node is left and it's the only one in expanded,
-    // or if focusModeExpandedNodeIds becomes empty for some reason (e.g. start node deleted and no others were expanded)
     if(focusModeExpandedNodeIds.size === 0 && isFocusModeActive){
         handleToggleFocusMode(false);
     }
@@ -1325,7 +1343,7 @@ const handleNodeInteractionStart = (
       try {
         const text = e.target?.result;
         if (typeof text !== 'string') {
-          alert("Error reading file content.");
+          toast({ title: "Error", description: "Error reading file content.", variant: "destructive" });
           return;
         }
         const data = JSON.parse(text);
@@ -1349,7 +1367,7 @@ const handleNodeInteractionStart = (
           );
 
           if (!areNodesValid || !areEdgesValid) {
-            alert("Uploaded file has invalid node or edge structure.");
+            toast({ title: "Error", description: "Uploaded file has invalid node or edge structure.", variant: "destructive" });
             return;
           }
           
@@ -1358,15 +1376,15 @@ const handleNodeInteractionStart = (
           setEdges(data.edges as Edge[]);
           await saveNodesToFileCallback(data.nodes as Node[]);
           await saveEdgesToFileCallback(data.edges as Edge[]);
-          alert("Data uploaded and saved successfully!");
+          toast({ title: "Success", description: "Data uploaded and saved successfully!"});
           loadInitialData();
           
         } else {
-          alert("Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.");
+          toast({ title: "Error", description: "Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.", variant: "destructive" });
         }
       } catch (error) {
         console.error("Error processing uploaded file:", error);
-        alert("Error processing uploaded file. Check console for details.");
+        toast({ title: "Error", description: "Error processing uploaded file. Check console for details.", variant: "destructive" });
       } finally {
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
@@ -1408,8 +1426,8 @@ const handleNodeInteractionStart = (
     setSearchQuery(""); 
     
     const nodeDimension = getNodeDimension(node.type);
-    const targetOffsetX = (containerWidth / 2) - (node.x + nodeDimension / 2) * scale;
-    const targetOffsetY = (containerHeight / 2) - (node.y + nodeDimension / 2) * scale;
+    const targetOffsetX = (containerWidth / 2) - (node.x + nodeDimension / 2) * 1.0; // Assuming target scale is 1.0
+    const targetOffsetY = (containerHeight / 2) - (node.y + nodeDimension / 2) * 1.0; // Assuming target scale is 1.0
 
     setOffsetX(Math.round(targetOffsetX));
     setOffsetY(Math.round(targetOffsetY));
@@ -2084,6 +2102,7 @@ const handleNodeInteractionStart = (
     
 
     
+
 
 
 
