@@ -18,5 +18,23 @@
     "x": 0,
     "y": 0,
     "type": "category"
+  },
+  {
+    "id": "95d2ec36-bca4-475f-a828-c3e92125ae33",
+    "name": "Iak",
+    "description": "",
+    "tags": [],
+    "x": 1390.4249855304422,
+    "y": -1851.9508164116987,
+    "type": "category"
+  },
+  {
+    "id": "8bb1f541-8de8-4a1d-b754-891de2637810",
+    "name": "Ksk",
+    "description": "",
+    "tags": [],
+    "x": 275.76365941745485,
+    "y": 310.6670981987609,
+    "type": "category"
   }
 ]

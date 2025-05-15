@@ -38,6 +38,59 @@ const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50; 
 
+// Zoom Slider Constants
+const LOG_SCALE_MIN = 0.04; // 4%
+const LOG_SCALE_MAX = 1.2;  // 120%
+const LINEAR_SLIDER_MIN = 0;
+const LINEAR_SLIDER_MAX = 100;
+
+// Helper functions for logarithmic scale conversion
+function linearToLogScale(
+  linearValue: number,
+  linearMin: number,
+  linearMax: number,
+  logMin: number,
+  logMax: number
+): number {
+  if (logMin <= 0 || logMax <= 0) {
+    console.error("Logarithmic scale bounds must be positive.");
+    return logMin; 
+  }
+  if (linearMin === linearMax) return logMin; // Avoid division by zero if range is 0
+  if (logMin === logMax) return logMin; // Avoid Math.pow issues if log range is 0
+
+  const G = logMax / logMin;
+  const exponent = (linearValue - linearMin) / (linearMax - linearMin);
+  return logMin * Math.pow(G, exponent);
+}
+
+function logToLinearScale(
+  logValue: number,
+  logMin: number,
+  logMax: number,
+  linearMin: number,
+  linearMax: number
+): number {
+  if (logValue <= 0 || logMin <= 0 || logMax <= 0) {
+    console.error("Logarithmic scale values must be positive.");
+    return linearMin; 
+  }
+  
+  // Clamp logValue to avoid issues with Math.log if it's outside the defined range
+  const clampedLogValue = Math.max(logMin, Math.min(logMax, logValue));
+
+  if (logMin === logMax) return linearMin; // If no log range, return min linear value
+
+  const G = logMax / logMin;
+  if (G === 1) return linearMin; // Avoid log(1) which is 0, and division by zero
+  
+  const logRatio = clampedLogValue / logMin;
+  if (logRatio <= 0) return linearMin; // Avoid Math.log of non-positive
+
+  return linearMin + (linearMax - linearMin) * (Math.log(logRatio) / Math.log(G));
+}
+
+
 // Helper functions for grid (defined outside component for stability if they don't depend on component state/props)
 function getGridLineWorldSeparation(scale: number): number {
   if (scale < 0.4) return BASE_GRID_SIZE * 4;
@@ -230,7 +283,7 @@ export default function Home() {
     let nodesToSet = loadedNodes;
 
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
-      const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
+      const mainNode = nodesToSet.find(n => n.tags.includes("Main")); // Use nodesToSet to ensure we use potentially pre-adjusted nodes if logic runs multiple times (should not with flag)
       if (mainNode) {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
@@ -238,13 +291,13 @@ export default function Home() {
         let mainNodeAfterAdjustment = mainNode;
 
         if (Math.abs(deltaX) > 0.0001 || Math.abs(deltaY) > 0.0001) { 
-            const adjustedNodes = loadedNodes.map(node => ({
+            const adjustedNodes = nodesToSet.map(node => ({
                 ...node,
                 x: node.x + deltaX,
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
+            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; // Re-find mainNode in adjusted array
             await saveNodesToFileCallback(nodesToSet); 
         }
         
@@ -731,7 +784,7 @@ export default function Home() {
           
           const scaleFactor = currentDistance / pinchStartData.initialPinchDistance;
           let newScale = pinchStartData.initialScale * scaleFactor;
-          newScale = Math.max(minScale, Math.min(maxScale, newScale)); 
+          newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); // Use LOG_SCALE bounds
 
           if (containerRef.current && isFinite(newScale)) {
             const rect = containerRef.current.getBoundingClientRect();
@@ -1036,8 +1089,9 @@ export default function Home() {
   const [isClient, setIsClient] = useState(false);
   useEffect(() => setIsClient(true), []);
 
-  const minScale = 0.1;
-  const maxScale = 1.5;
+  // Local min/max scale values, updated to new bounds
+  const minScale = LOG_SCALE_MIN;
+  const maxScale = LOG_SCALE_MAX;
 
   const screenGridData = useMemo(() => {
     if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0 || scale === 0 || !isFinite(scale)) {
@@ -1083,14 +1137,13 @@ export default function Home() {
             return;
           }
           
-          setInitialLoadAndCenteringComplete(false); // Allow re-centering if "Main" node exists in new data
+          setInitialLoadAndCenteringComplete(false); 
           setNodes(data.nodes as Node[]);
           setEdges(data.edges as Edge[]);
           await saveNodesToFileCallback(data.nodes as Node[]);
           await saveEdgesToFileCallback(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
-          // loadInitialData will be called due to state changes, no need to call explicitly
-          // if nodes/edges are dependencies of loadInitialData's useEffect
+          
         } else {
           alert("Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.");
         }
@@ -1117,11 +1170,14 @@ export default function Home() {
             <Label htmlFor="scale-slider" className="text-sm text-right">Zoom: {isClient ? Math.round(scale * 100) : 100}%</Label>
             <Slider
                 id="scale-slider"
-                min={minScale}
-                max={maxScale}
-                step={0.01}
-                value={[scale]}
-                onValueChange={(value) => setScale(value[0])}
+                min={LINEAR_SLIDER_MIN}
+                max={LINEAR_SLIDER_MAX}
+                step={1} // Fine enough for linear 0-100 range
+                value={isClient ? [logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)] : [logToLinearScale(1, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)]}
+                onValueChange={(value) => {
+                    const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
+                    setScale(Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)));
+                }}
                 className="col-span-2"
             />
         </div>
@@ -1271,12 +1327,12 @@ export default function Home() {
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
             }
             
-            const minFontSize = 6; 
+            const minFontSizeForNodeText = 6; 
             const baseNameFontSize = 16; 
             const baseTagFontSize = 10;  
 
-            const dynamicNameFontSizeScreen = Math.max(minFontSize, baseNameFontSize * Math.min(scale, 1)); 
-            const dynamicTagFontSizeScreen = Math.max(minFontSize, baseTagFontSize * Math.min(scale, 1));
+            const dynamicNameFontSizeScreen = Math.max(minFontSizeForNodeText, baseNameFontSize * Math.min(scale, 1)); 
+            const dynamicTagFontSizeScreen = Math.max(minFontSizeForNodeText, baseTagFontSize * Math.min(scale, 1));
 
             const finalNameFontSize = dynamicNameFontSizeScreen / scale;
             const finalTagFontSize = dynamicTagFontSizeScreen / scale;
@@ -1551,3 +1607,5 @@ export default function Home() {
   );
 }
 
+
+    
