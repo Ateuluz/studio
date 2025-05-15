@@ -34,5 +34,15 @@
     "sourceNodeId": "4ce7e597-49bd-4f46-a4e9-bf2725dbc7eb",
     "targetNodeId": "8cc3da10-27dd-4750-813f-7162bb50a066",
     "tags": []
+  },
+  {
+    "id": "c97232c4-1d5c-4424-b5ad-3e3df6100618",
+    "sourceNodeId": "5ef6d7ef-7e42-420d-95a9-e30340c65a45",
+    "targetNodeId": "0cf50c69-f661-4596-adfd-cb6d1d5aca4e",
+    "tags": [
+      {
+        "name": "Delete"
+      }
+    ]
   }
 ]
