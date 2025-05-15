@@ -180,7 +180,7 @@ function formatTagsWithDates(tags: EdgeTag[]): string {
   }).join(', ');
 }
 
-type InteractionMode = 'none' | 'backgroundQuickPressCandidate' | 'backgroundPanning' | 'pinchZooming';
+type InteractionMode = 'none' | 'backgroundQuickPressCandidate' | 'backgroundPanning' | 'pinchZooming' | 'nodeInteractionDuringLayoutLock';
 
 interface PinchStartData {
   initialPinchDistance: number;
@@ -226,13 +226,16 @@ export default function Home() {
   const [editEdgeTagsInput, setEditEdgeTagsInput] = useState("");
 
   const [activeInteractionNodeId, setActiveInteractionNodeId] = useState<string | null>(null);
-  const [pressHoldTimer, setPressHoldTimer] = useState<NodeJS.Timeout | null>(null);
+  const pressHoldTimerRef = useRef<NodeJS.Timeout | null>(null); // Use ref for pressHoldTimer
   const [interactionStartPos, setInteractionStartPos] = useState<{ x: number, y: number } | null>(null); 
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number } | null>(null);
   const [isDraggingForReposition, setIsDraggingForReposition] = useState(false);
+  const isDraggingForRepositionRef = useRef(isDraggingForReposition); // Ref for isDraggingForReposition
   const [isLinkingModeActive, setIsLinkingModeActive] = useState(false);
   const [linkingSourceNodeId, setLinkingSourceNodeId] = useState<string | null>(null);
   const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
+  const activeInteractionNodeIdRef = useRef(activeInteractionNodeId);
+
 
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('none');
   const [panStartCoords, setPanStartCoords] = useState<{ x: number; y: number } | null>(null);
@@ -254,6 +257,9 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<Node[]>([]);
 
   const [isLayoutLocked, setIsLayoutLocked] = useState(false);
+
+  useEffect(() => { activeInteractionNodeIdRef.current = activeInteractionNodeId; }, [activeInteractionNodeId]);
+  useEffect(() => { isDraggingForRepositionRef.current = isDraggingForReposition; }, [isDraggingForReposition]);
 
 
   const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
@@ -320,6 +326,8 @@ export default function Home() {
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
+        // Critical order: set active interaction to null *before* setting offsets that might trigger effects
+        setActiveInteractionNodeId(null);
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((containerHeight / 2) - (mainNodeDimension / 2) * scale));
       }
@@ -652,47 +660,62 @@ export default function Home() {
     }
   };
 
-  const handleNodeInteractionStart = (
-    event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
-    node: Node
-  ) => {
-    setInteractionMode('none');
-    setPanStartCoords(null);
-    setQuickPressStartInfo(null);
-    setPinchStartData(null);
-    
-    if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); 
+const handleNodeInteractionStart = (
+  event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
+  node: Node
+) => {
+  // Clear any canvas-global interaction states first
+  setInteractionMode('none');
+  setPanStartCoords(null);
+  setQuickPressStartInfo(null);
+  setPinchStartData(null);
 
-    const point = 'touches' in event ? event.touches[0] : event;
+  if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+
+  const point = 'touches' in event ? event.touches[0] : event;
+
+  if (isLayoutLocked) {
+    event.stopPropagation(); // Prevent canvas background handlers for this event
     setActiveInteractionNodeId(node.id);
     setInteractionStartPos({ x: point.clientX, y: point.clientY });
-
-    const worldMousePos = screenToWorld(point.clientX, point.clientY);
-    setDragOffset({
-        x: worldMousePos.x - node.x,
-        y: worldMousePos.y - node.y
-    });
-
+    setInteractionMode('nodeInteractionDuringLayoutLock');
+    setPanStartCoords({ x: point.clientX, y: point.clientY }); // Prepare for potential pan
+    
+    // Clear node manipulation states as they are disabled under layout lock
+    setDragOffset(null);
+    if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current); pressHoldTimerRef.current = null;
     setIsDraggingForReposition(false);
     setIsLinkingModeActive(false);
     setLinkingSourceNodeId(null);
     setLinkingLinePreview(null);
+    return; 
+  }
 
-    if (pressHoldTimer) clearTimeout(pressHoldTimer);
-    if (isLayoutLocked) { // If layout is locked, don't start press-hold for linking
-      setPressHoldTimer(null);
-      return; 
+  // Original logic for when layout is NOT locked:
+  setActiveInteractionNodeId(node.id);
+  setInteractionStartPos({ x: point.clientX, y: point.clientY });
+  
+  const worldMousePos = screenToWorld(point.clientX, point.clientY);
+  setDragOffset({
+      x: worldMousePos.x - node.x,
+      y: worldMousePos.y - node.y
+  });
+
+  setIsDraggingForReposition(false);
+  setIsLinkingModeActive(false);
+  setLinkingSourceNodeId(null);
+  setLinkingLinePreview(null);
+
+  if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current);
+  pressHoldTimerRef.current = setTimeout(() => {
+    if (activeInteractionNodeIdRef.current === node.id && !isDraggingForRepositionRef.current) { 
+      setIsLinkingModeActive(true);
+      setLinkingSourceNodeId(node.id);
     }
+    pressHoldTimerRef.current = null; 
+  }, PRESS_HOLD_THRESHOLD);
+};
 
-    const timer = setTimeout(() => {
-      if (activeInteractionNodeId === node.id && !isDraggingForReposition) { 
-        setIsLinkingModeActive(true);
-        setLinkingSourceNodeId(node.id);
-      }
-      setPressHoldTimer(null); 
-    }, PRESS_HOLD_THRESHOLD);
-    setPressHoldTimer(timer);
-  };
 
   const getDistance = (touches: TouchList) => {
     const dx = touches[0].clientX - touches[1].clientX;
@@ -718,20 +741,20 @@ export default function Home() {
       return; 
     }
     
+     // Clear any active node interaction states if starting a canvas interaction
+    setActiveInteractionNodeId(null);
+    setIsDraggingForReposition(false);
+    setIsLinkingModeActive(false);
+    setLinkingSourceNodeId(null);
+    setLinkingLinePreview(null);
+    if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current); pressHoldTimerRef.current = null;
+    setInteractionStartPos(null);
+    setDragOffset(null);
+
     if (event.type.startsWith('touch')) {
         const touchEvent = event as React.TouchEvent;
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
-
-            setActiveInteractionNodeId(null);
-            setIsDraggingForReposition(false);
-            setIsLinkingModeActive(false);
-            setLinkingSourceNodeId(null);
-            setLinkingLinePreview(null);
-            if (pressHoldTimer) clearTimeout(pressHoldTimer); setPressHoldTimer(null);
-            setInteractionStartPos(null);
-            setDragOffset(null);
-
             setInteractionMode('pinchZooming');
             const initialDistance = getDistance(touchEvent.touches);
             const screenMid = getMidpoint(touchEvent.touches);
@@ -764,55 +787,13 @@ export default function Home() {
       time: Date.now() 
     });
     setPinchStartData(null); 
-
-
-  }, [screenToWorld, scale, pressHoldTimer, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setPressHoldTimer]); 
+  }, [screenToWorld, scale, pressHoldTimerRef, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
 
     const handleMove = (event: MouseEvent | TouchEvent) => {
-      if (activeInteractionNodeId && interactionStartPos && dragOffset && containerRef.current) {
-        if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
-        const point = 'touches' in event ? event.touches[0] : event;
-        if (!point) return; 
-
-        const worldMousePos = screenToWorld(point.clientX, point.clientY);
-        const screenDx = point.clientX - interactionStartPos.x;
-        const screenDy = point.clientY - interactionStartPos.y;
-
-        if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
-          if (pressHoldTimer) { 
-            clearTimeout(pressHoldTimer);
-            setPressHoldTimer(null);
-          }
-
-          if (isLinkingModeActive && linkingSourceNodeId) {
-            setIsDraggingForReposition(false); 
-            const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
-            if (sourceNode) {
-              const sourceDim = getNodeDimension(sourceNode);
-              setLinkingLinePreview({
-                x1: sourceNode.x + sourceDim / 2,
-                y1: sourceNode.y + sourceDim / 2,
-                x2: worldMousePos.x,
-                y2: worldMousePos.y,
-              });
-            }
-          } else if (!isLayoutLocked) { // Only allow repositioning if layout is not locked
-            setIsDraggingForReposition(true);
-            setNodes(prevNodes => prevNodes.map(n => {
-              if (n.id === activeInteractionNodeId) {
-                let newX = worldMousePos.x - dragOffset.x;
-                let newY = worldMousePos.y - dragOffset.y;
-                return { ...n, x: newX, y: newY };
-              }
-              return n;
-            }));
-          }
-        }
-      } 
-      else if (interactionMode === 'pinchZooming' && pinchStartData && 'touches' in event && (event as TouchEvent).touches.length === 2) {
+      if (interactionMode === 'pinchZooming' && pinchStartData && 'touches' in event && (event as TouchEvent).touches.length === 2) {
           if (event.cancelable) event.preventDefault();
           const touches = (event as TouchEvent).touches;
           const currentDistance = getDistance(touches);
@@ -831,16 +812,71 @@ export default function Home() {
             setOffsetX(Math.round(newOffsetX));
             setOffsetY(Math.round(newOffsetY));
           }
-      }
-      else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords && quickPressStartInfo) {
+      } else if (interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeId && interactionStartPos) {
+          if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+          const point = 'touches' in event ? event.touches[0] : event;
+          if (!point) return;
+          const screenDx = point.clientX - interactionStartPos.x;
+          const screenDy = point.clientY - interactionStartPos.y;
+
+          if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
+            setInteractionMode('backgroundPanning');
+            // panStartCoords is already set from handleNodeInteractionStart
+            setActiveInteractionNodeId(null); 
+            setInteractionStartPos(null); 
+          }
+      } else if (activeInteractionNodeId && interactionStartPos && !isLayoutLocked) { // Node-based interaction, not layout locked
+        if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
+        const point = 'touches' in event ? event.touches[0] : event;
+        if (!point) return; 
+
+        const worldMousePos = screenToWorld(point.clientX, point.clientY);
+        const screenDx = point.clientX - interactionStartPos.x;
+        const screenDy = point.clientY - interactionStartPos.y;
+
+        if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
+          if (pressHoldTimerRef.current) { 
+            clearTimeout(pressHoldTimerRef.current);
+            pressHoldTimerRef.current = null;
+          }
+
+          if (isLinkingModeActive && linkingSourceNodeId) {
+            setIsDraggingForReposition(false); 
+            const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
+            if (sourceNode) {
+              const sourceDim = getNodeDimension(sourceNode);
+              setLinkingLinePreview({
+                x1: sourceNode.x + sourceDim / 2,
+                y1: sourceNode.y + sourceDim / 2,
+                x2: worldMousePos.x,
+                y2: worldMousePos.y,
+              });
+            }
+          } else if (dragOffset) { // dragOffset check means it's a reposition drag
+            setIsDraggingForReposition(true);
+            setNodes(prevNodes => prevNodes.map(n => {
+              if (n.id === activeInteractionNodeId) {
+                let newX = worldMousePos.x - dragOffset.x;
+                let newY = worldMousePos.y - dragOffset.y;
+                return { ...n, x: newX, y: newY };
+              }
+              return n;
+            }));
+          }
+        }
+      } 
+      else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
         const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
+        if (!point) return;
         const currentX = point.clientX;
         const currentY = point.clientY;
         if (Math.abs(currentX - quickPressStartInfo.screenX) > DRAG_MOVE_THRESHOLD || Math.abs(currentY - quickPressStartInfo.screenY) > DRAG_MOVE_THRESHOLD) {
           setInteractionMode('backgroundPanning'); 
         }
       } else if (interactionMode === 'backgroundPanning' && panStartCoords) {
+        if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
         const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
+        if (!point) return;
         const dx = point.clientX - panStartCoords.x;
         const dy = point.clientY - panStartCoords.y;
         setOffsetX(prev => Math.round(prev + dx));
@@ -850,10 +886,25 @@ export default function Home() {
     };
 
     const handleEnd = async (event: MouseEvent | TouchEvent) => {
-      if (activeInteractionNodeId) {
-        if (pressHoldTimer) { 
-          clearTimeout(pressHoldTimer);
-          setPressHoldTimer(null);
+      if (interactionMode === 'pinchZooming') {
+        if ('touches' in event && (event as TouchEvent).touches.length < 2) {
+            setInteractionMode('none');
+            setPinchStartData(null);
+        }
+      } else if (interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeId) {
+          // This was a click on a node while layout was locked, without a drag
+          const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
+          if (nodeToEdit) {
+            openEditNodeDialog(nodeToEdit);
+          }
+          setInteractionMode('none');
+          setActiveInteractionNodeId(null);
+          setInteractionStartPos(null);
+          setPanStartCoords(null);
+      } else if (activeInteractionNodeId && !isLayoutLocked) { // Node interaction end, not layout locked
+        if (pressHoldTimerRef.current) { 
+          clearTimeout(pressHoldTimerRef.current);
+          pressHoldTimerRef.current = null;
         }
 
         const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
@@ -895,7 +946,7 @@ export default function Home() {
                       setNewEdgeTagsInput("");
                       setIsCreateEdgeDialogOpen(true);
                   }
-              } else if (!isLayoutLocked) { // Only move if layout not locked 
+              } else { 
                   const updatedNodes = nodes.map(n => {
                       if (n.id === linkingSourceNodeId) {
                           const nodeDim = getNodeDimension(n);
@@ -909,7 +960,7 @@ export default function Home() {
                   await saveNodesToFileCallback(updatedNodes); 
               }
           }
-        } else if (isDraggingForReposition && !isLayoutLocked) { 
+        } else if (isDraggingForReposition) { 
           const draggedNodeId = activeInteractionNodeId; 
           if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { 
               const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
@@ -942,14 +993,14 @@ export default function Home() {
         setLinkingSourceNodeId(null);
         setLinkingLinePreview(null);
       } 
-      else if (interactionMode === 'pinchZooming') {
-        if ('touches' in event && (event as TouchEvent).touches.length < 2) {
-            setInteractionMode('none');
-            setPinchStartData(null);
-        }
-      }
       else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
         const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
+        if (!point) {
+            setInteractionMode('none');
+            setQuickPressStartInfo(null);
+            setPanStartCoords(null);
+            return;
+        }
         const releaseTime = Date.now();
         const duration = releaseTime - quickPressStartInfo.time;
         const screenDistanceMoved = Math.sqrt(
@@ -958,7 +1009,7 @@ export default function Home() {
         );
 
         if (duration < QUICK_PRESS_DURATION_THRESHOLD && screenDistanceMoved < DRAG_MOVE_THRESHOLD) {
-          if (!isLayoutLocked) { // Only allow node creation if layout is not locked
+          if (!isLayoutLocked) { 
             setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
             setIsCreateNodeDialogOpen(true);
           }
@@ -967,7 +1018,7 @@ export default function Home() {
       }
 
       
-      if (interactionMode !== 'none' && interactionMode !== 'pinchZooming') { 
+      if (interactionMode !== 'none' && interactionMode !== 'pinchZooming' && !(interactionMode === 'nodeInteractionDuringLayoutLock' && activeInteractionNodeId)) { 
           setInteractionMode('none');
       }
       setPanStartCoords(null); 
@@ -996,17 +1047,17 @@ export default function Home() {
         currentContainerRef.removeEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
         currentContainerRef.removeEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener);
       }
-      if (pressHoldTimer) clearTimeout(pressHoldTimer);
+      if (pressHoldTimerRef.current) clearTimeout(pressHoldTimerRef.current);
     };
   }, [
-      activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, 
+      activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimerRef, nodes, edges, 
       isDraggingForReposition, openEditNodeDialog, isLinkingModeActive, 
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
       scale, offsetX, offsetY, saveNodesToFileCallback, saveEdgesToFileCallback,
       interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart, pinchStartData,
       setNodes, setEdges, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive,
-      setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
+      setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
       setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight, isLayoutLocked 
@@ -1079,7 +1130,7 @@ export default function Home() {
   }, [getNodeDimension, containerWidth]); 
 
   useEffect(() => { 
-    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none') return; 
+    if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none' || isLayoutLocked) return; 
 
     const repulsedNodes = applyRepulsion(nodes, null); 
     let changed = false;
@@ -1099,10 +1150,10 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, isLayoutLocked]); 
 
   useEffect(() => { 
-    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
+    if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none' || isLayoutLocked) return; 
 
     const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); 
     let changed = false;
@@ -1128,7 +1179,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, isLayoutLocked]); 
 
 
   const [isClient, setIsClient] = useState(false);
@@ -1482,11 +1533,12 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease, transform 0.1s ease-out', 
+              transition: 'box-shadow 0.2s ease', // Removed transform transition
               userSelect: 'none', 
               border: '1px solid hsl(var(--border))' 
             };
-
+            
+            // No longer applying scale transform here for active nodes to match edge dragging feel
             if (node.type === 'entity') { 
               nodeStyles.borderColor = 'hsl(var(--ring))'; 
               nodeStyles.borderWidth = '2px';
@@ -1568,8 +1620,8 @@ export default function Home() {
             <DialogTrigger asChild>
               <Button 
                 className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg w-full justify-start px-4 py-2"
-                disabled={isLayoutLocked}
-                title={isLayoutLocked ? "Node creation disabled while Layout Lock is active" : "Create New Node"}
+                disabled={isLayoutLocked || isCreateNodeButtonDisabled}
+                title={isLayoutLocked ? "Node creation disabled while Layout Lock is active" : (isCreateNodeButtonDisabled ? "Node name must be unique and not empty" : "Create New Node")}
               >
                 <Plus className="mr-2 h-5 w-5" />
                 Create Node
@@ -1742,7 +1794,7 @@ export default function Home() {
                   <DialogClose asChild>
                     <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null); setConnectNodeSearchQuery(""); setConnectNodeSearchResults([]);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
                   </DialogClose>
-                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled || isLayoutLocked} title={isLayoutLocked ? "Node editing disabled while Layout Lock is active" : "Save Changes"}>Save Changes</Button>
+                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled || isLayoutLocked} title={isLayoutLocked ? "Node editing disabled while Layout Lock is active" : (isEditNodeButtonDisabled ? "Node name must be unique and not empty" : "Save Changes")}>Save Changes</Button>
                 </div>
               </DialogFooter>
             </div> 
