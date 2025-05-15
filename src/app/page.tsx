@@ -39,7 +39,7 @@ const REPULSION_ITERATIONS = 10;
 const BASE_GRID_SIZE = 50; 
 
 // Zoom Slider Constants
-const LOG_SCALE_MIN = 0.02; // Updated from 0.04
+const LOG_SCALE_MIN = 0.02; 
 const LOG_SCALE_MAX = 1.2;  // 120%
 const LINEAR_SLIDER_MIN = 0;
 const LINEAR_SLIDER_MAX = 100;
@@ -93,7 +93,7 @@ function logToLinearScale(
 }
 
 
-// Helper functions for grid
+// Helper functions for screen-space grid
 function getGridLineWorldSeparation(scale: number): number {
   if (scale < 0.4) return BASE_GRID_SIZE * 4;
   if (scale < 0.8) return BASE_GRID_SIZE * 2;
@@ -305,7 +305,7 @@ export default function Home() {
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        setActiveInteractionNodeId(null); 
+        setActiveInteractionNodeId(null); // Ensure no node interactions interfere
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
@@ -315,7 +315,7 @@ export default function Home() {
     setNodes(nodesToSet);
     setEdges(loadedEdges);
     
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete]);
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete]);
 
 
   useEffect(() => {
@@ -642,6 +642,12 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
+    // Reset canvas-global interaction states
+    setInteractionMode('none');
+    setPanStartCoords(null);
+    setQuickPressStartInfo(null);
+    setPinchStartData(null);
+
     if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); 
 
     const point = 'touches' in event ? event.touches[0] : event;
@@ -698,6 +704,17 @@ export default function Home() {
         const touchEvent = event as React.TouchEvent;
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
+
+            // Reset node-specific interaction states when pinch starts
+            setActiveInteractionNodeId(null);
+            setIsDraggingForReposition(false);
+            setIsLinkingModeActive(false);
+            setLinkingSourceNodeId(null);
+            setLinkingLinePreview(null);
+            if (pressHoldTimer) clearTimeout(pressHoldTimer); setPressHoldTimer(null);
+            setInteractionStartPos(null);
+            setDragOffset(null);
+
             setInteractionMode('pinchZooming');
             const initialDistance = getDistance(touchEvent.touches);
             const screenMid = getMidpoint(touchEvent.touches);
@@ -732,7 +749,7 @@ export default function Home() {
     setPinchStartData(null);
 
 
-  }, [screenToWorld, scale]); 
+  }, [screenToWorld, scale, pressHoldTimer]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -787,7 +804,7 @@ export default function Home() {
           let newScale = pinchStartData.initialScale * scaleFactor;
           newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); 
 
-          if (containerRef.current && isFinite(newScale)) {
+          if (containerRef.current && isFinite(newScale) && newScale > 0) {
             const rect = containerRef.current.getBoundingClientRect();
             const newOffsetX = currentScreenMidpoint.x - rect.left - (pinchStartData.pinchMidpointWorld.x * newScale);
             const newOffsetY = currentScreenMidpoint.y - rect.top - (pinchStartData.pinchMidpointWorld.y * newScale);
@@ -1293,7 +1310,7 @@ export default function Home() {
                 y2={linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
                 strokeWidth={worldStrokeWidth} 
-                strokeDasharray={`${5/scale},${5/scale}`} 
+                strokeDasharray={`${5/Math.max(scale, 0.001)},${5/Math.max(scale, 0.001)}`} 
               />
             )}
           </svg>
@@ -1339,8 +1356,8 @@ export default function Home() {
             const dynamicNameFontSizeScreen = Math.max(minFontSizeForNodeText, baseNameFontSize * Math.min(scale, 1)); 
             const dynamicTagFontSizeScreen = Math.max(minFontSizeForNodeText, baseTagFontSize * Math.min(scale, 1));
 
-            const finalNameFontSize = dynamicNameFontSizeScreen / scale;
-            const finalTagFontSize = dynamicTagFontSizeScreen / scale;
+            const finalNameFontSize = dynamicNameFontSizeScreen / Math.max(scale, 0.001);
+            const finalTagFontSize = dynamicTagFontSizeScreen / Math.max(scale, 0.001);
 
 
             return (
@@ -1611,3 +1628,4 @@ export default function Home() {
     </main>
   );
 }
+
