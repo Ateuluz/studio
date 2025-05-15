@@ -26,11 +26,11 @@ import { cn } from "@/lib/utils";
 
 const CATEGORY_NODE_DIMENSION = 160;
 const ENTITY_NODE_DIMENSION = 128;
-const CONTAINER_HEIGHT_PX = 700; // Increased from 500
+// const CONTAINER_HEIGHT_PX = 700; // Replaced by containerHeight state
 
 const PRESS_HOLD_THRESHOLD = 700; // ms
-const DRAG_MOVE_THRESHOLD = 5; // pixels // Reduced from 10
-const QUICK_PRESS_DURATION_THRESHOLD = 70; // ms // Reduced from 250
+const DRAG_MOVE_THRESHOLD = 5; // pixels 
+const QUICK_PRESS_DURATION_THRESHOLD = 70; // ms 
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
 const REPULSION_STRENGTH = 0.5;
@@ -197,6 +197,7 @@ export default function Home() {
   const transformedContentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [containerWidth, setContainerWidth] = useState(0); 
+  const [containerHeight, setContainerHeight] = useState(0);
   const [initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete] = useState(false);
 
 
@@ -287,7 +288,7 @@ export default function Home() {
 
     let nodesToSet = loadedNodes;
 
-    if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
+    if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0 && containerHeight > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
         setActiveInteractionNodeId(null); 
@@ -310,23 +311,25 @@ export default function Home() {
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
-        setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
+        setOffsetY(Math.round((containerHeight / 2) - (mainNodeDimension / 2) * scale));
       }
       setInitialLoadAndCenteringComplete(true);
     }
     setNodes(nodesToSet);
     setEdges(loadedEdges);
     
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete, setOffsetX, setOffsetY, setNodes, setEdges, setActiveInteractionNodeId]);
+  }, [containerWidth, containerHeight, getNodeDimension, scale, saveNodesToFileCallback, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete, setOffsetX, setOffsetY, setNodes, setEdges, setActiveInteractionNodeId]);
 
 
   useEffect(() => {
     if (containerRef.current) {
       setContainerWidth(containerRef.current.getBoundingClientRect().width);
+      setContainerHeight(containerRef.current.getBoundingClientRect().height);
     }
     const handleResize = () => {
       if (containerRef.current) {
         setContainerWidth(containerRef.current.getBoundingClientRect().width);
+        setContainerHeight(containerRef.current.getBoundingClientRect().height);
       }
     };
     window.addEventListener('resize', handleResize);
@@ -334,8 +337,10 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    loadInitialData();
-  }, [loadInitialData]);
+    if (containerHeight > 0) { // Ensure dimensions are set before initial load
+        loadInitialData();
+    }
+  }, [loadInitialData, containerHeight]);
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -348,7 +353,7 @@ export default function Home() {
 
  useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return; 
-    if (!containerRef.current || containerWidth === 0 || scale === 0 || !isFinite(scale)) return;
+    if (!containerRef.current || containerWidth === 0 || containerHeight === 0 || scale === 0 || !isFinite(scale)) return;
 
     const nodesToConsider = nodes.filter(n => n.id !== activeInteractionNodeId);
 
@@ -361,7 +366,7 @@ export default function Home() {
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
       const defaultContentWorldWidth = (containerWidth || 1) / Math.max(scale,0.01);
-      const defaultContentWorldHeight = (CONTAINER_HEIGHT_PX || 1) / Math.max(scale,0.01);
+      const defaultContentWorldHeight = (containerHeight || 1) / Math.max(scale,0.01);
       contentMinXWorld = -defaultContentWorldWidth / 2;
       contentMaxXWorld = defaultContentWorldWidth / 2;
       contentMinYWorld = -defaultContentWorldHeight / 2;
@@ -369,7 +374,7 @@ export default function Home() {
     }
 
     const paddingXWorld = (containerWidth / 2) / Math.max(scale, 0.01); 
-    const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / Math.max(scale, 0.01); 
+    const paddingYWorld = (containerHeight / 2) / Math.max(scale, 0.01); 
 
     const contentWorldWidth = contentMaxXWorld - contentMinXWorld;
     const contentWorldHeight = contentMaxYWorld - contentMinYWorld;
@@ -382,15 +387,15 @@ export default function Home() {
         targetOffsetX = offsetX; 
     }
 
-    if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
-        targetOffsetY = (CONTAINER_HEIGHT_PX / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
+    if (contentWorldHeight * scale <= containerHeight) {
+        targetOffsetY = (containerHeight / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
     } else { 
         targetOffsetY = offsetY; 
     }
 
     const minOffsetX = containerWidth - (contentMaxXWorld * scale) - paddingXWorld * scale;
     const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
-    const minOffsetY = CONTAINER_HEIGHT_PX - (contentMaxYWorld * scale) - paddingYWorld * scale;
+    const minOffsetY = containerHeight - (contentMaxYWorld * scale) - paddingYWorld * scale;
     const maxOffsetY = -(contentMinYWorld * scale) + paddingYWorld * scale;
     
     let finalMinOffsetX, finalMaxOffsetX, finalMinOffsetY, finalMaxOffsetY;
@@ -403,7 +408,7 @@ export default function Home() {
         finalMaxOffsetX = maxOffsetX;
     }
 
-    if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
+    if (contentWorldHeight * scale <= containerHeight) {
         finalMinOffsetY = targetOffsetY;
         finalMaxOffsetY = targetOffsetY;
     } else {
@@ -417,7 +422,7 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]); 
+  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]); 
 
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
@@ -456,7 +461,7 @@ export default function Home() {
   }, [panYSliderLimits, offsetY, activeInteractionNodeId, interactionMode, setOffsetY]);
 
   const createNode = async () => {
-    if (newNodeName && containerWidth > 0 && scale !== 0 && isFinite(scale)) {
+    if (newNodeName && containerWidth > 0 && containerHeight > 0 && scale !== 0 && isFinite(scale)) {
       
       let currentNodesForCreation = [...nodes];
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
@@ -486,9 +491,9 @@ export default function Home() {
       if (!placed) { 
         let attempts = 0;
         const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
-        const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
+        const worldViewCenterY = (-offsetY + containerHeight / 2) / scale;
         const creationAreaWorldWidth = (containerWidth / 2) / scale; 
-        const creationAreaWorldHeight = (CONTAINER_HEIGHT_PX / 2) / scale; 
+        const creationAreaWorldHeight = (containerHeight / 2) / scale; 
 
         do {
           newNodeX = worldViewCenterX - (creationAreaWorldWidth / 2) + Math.random() * creationAreaWorldWidth;
@@ -501,7 +506,7 @@ export default function Home() {
               newNodeX < existingNode.x + existingNodeDimension &&
               newNodeX + newNodeDimension > existingNode.x &&
               newNodeY < existingNode.y + existingNodeDimension &&
-              newNodeY + existingNodeDimension > existingNode.y
+              newNodeY + newNodeDimension > existingNode.y
             ) {
               overlap = true;
               break;
@@ -1124,11 +1129,11 @@ export default function Home() {
   const maxScale = LOG_SCALE_MAX;
 
   const screenGridData = useMemo(() => {
-    if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0 || scale === 0 || !isFinite(scale)) {
+    if (!isClient || containerWidth === 0 || containerHeight === 0 || scale === 0 || !isFinite(scale)) {
       return { verticalLines: [], horizontalLines: [] };
     }
-    return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
-  }, [isClient, offsetX, offsetY, scale, containerWidth]);
+    return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, containerHeight);
+  }, [isClient, offsetX, offsetY, scale, containerWidth, containerHeight]);
   
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1198,13 +1203,12 @@ export default function Home() {
 
 
   return (
-    <main className="flex flex-col items-center justify-start min-h-screen p-4 bg-background text-foreground overflow-hidden"> 
+    <main className="flex flex-col items-center h-screen bg-background text-foreground overflow-hidden"> 
       <h1 className="text-3xl font-bold tracking-tight my-4 text-center">Node Weaver</h1>
 
       <div
         ref={containerRef}
-        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden" 
-        style={{ height: `${CONTAINER_HEIGHT_PX}px` }}
+        className="relative w-full max-w-3xl border rounded-lg shadow-inner bg-card touch-none overflow-hidden flex-grow" 
       >
         <Button
           variant="ghost"
@@ -1281,7 +1285,7 @@ export default function Home() {
               x1={lineX}
               y1={0}
               x2={lineX}
-              y2={CONTAINER_HEIGHT_PX}
+              y2={containerHeight}
               stroke="hsl(var(--border))"
               strokeWidth={0.5} 
               opacity="0.3"
