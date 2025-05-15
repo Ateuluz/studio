@@ -28,8 +28,8 @@ const ENTITY_NODE_DIMENSION = 128;
 const CONTAINER_HEIGHT_PX = 500; 
 
 const PRESS_HOLD_THRESHOLD = 700; // ms
-const DRAG_MOVE_THRESHOLD = 5; // pixels - Changed from 10 to 5
-const QUICK_PRESS_DURATION_THRESHOLD = 70; // ms - Drastically reduced from 250ms
+const DRAG_MOVE_THRESHOLD = 5; // pixels
+const QUICK_PRESS_DURATION_THRESHOLD = 70; // ms 
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
 const REPULSION_STRENGTH = 0.5;
@@ -141,6 +141,8 @@ export default function Home() {
   const transformedContentRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [containerWidth, setContainerWidth] = useState(0); 
+  const [initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete] = useState(false);
+
 
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
@@ -227,7 +229,7 @@ export default function Home() {
 
     let nodesToSet = loadedNodes;
 
-    if (loadedNodes.length > 0 && containerWidth > 0) {
+    if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
       if (mainNode) {
         const deltaX = -mainNode.x;
@@ -253,11 +255,12 @@ export default function Home() {
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
       }
+      setInitialLoadAndCenteringComplete(true);
     }
     setNodes(nodesToSet);
     setEdges(loadedEdges);
     
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId]);
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId, initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete]);
 
 
   useEffect(() => {
@@ -287,7 +290,7 @@ export default function Home() {
   }, [offsetX, offsetY, scale]);
 
  useEffect(() => {
-    if (activeInteractionNodeId) return; 
+    if (activeInteractionNodeId || interactionMode === 'pinchZooming') return; 
     if (!containerRef.current || containerWidth === 0 || scale === 0 || !isFinite(scale)) return;
 
     const nodesToConsider = nodes;
@@ -358,25 +361,25 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY]);
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, offsetX, offsetY, interactionMode]);
 
   // Effect to clamp offsetX
   useEffect(() => {
-    if (activeInteractionNodeId) return;
+    if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
     const currentClampedOffsetX = Math.max(panXSliderLimits.min, Math.min(panXSliderLimits.max, offsetX));
     if (Math.round(currentClampedOffsetX) !== Math.round(offsetX) && isFinite(currentClampedOffsetX)) {
         setOffsetX(Math.round(currentClampedOffsetX));
     }
-  }, [panXSliderLimits, offsetX, activeInteractionNodeId]);
+  }, [panXSliderLimits, offsetX, activeInteractionNodeId, interactionMode]);
 
   // Effect to clamp offsetY
   useEffect(() => {
-    if (activeInteractionNodeId) return;
+    if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
     const currentClampedOffsetY = Math.max(panYSliderLimits.min, Math.min(panYSliderLimits.max, offsetY));
     if (Math.round(currentClampedOffsetY) !== Math.round(offsetY) && isFinite(currentClampedOffsetY)) {
         setOffsetY(Math.round(currentClampedOffsetY));
     }
-  }, [panYSliderLimits, offsetY, activeInteractionNodeId]);
+  }, [panYSliderLimits, offsetY, activeInteractionNodeId, interactionMode]);
 
   const createNode = async () => {
     if (newNodeName && containerWidth > 0 && scale !== 0 && isFinite(scale)) {
@@ -402,6 +405,7 @@ export default function Home() {
         newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
         
+        // Basic check for overlap at exact pending coords (could be expanded)
         let overlapWithExistingAtPending = false;
         for (const existingNode of currentNodesForCreation) {
             const existingNodeDimension = getNodeDimension(existingNode);
@@ -525,7 +529,6 @@ export default function Home() {
     
     setEditingNode(null);
     setIsEditNodeDialogOpen(false);
-    // setActiveInteractionNodeId(null); // Handled by onOpenChange of Dialog
   };
 
 
@@ -655,7 +658,7 @@ export default function Home() {
             return;
         }
     }
-     // For single touch or mouse down
+     
     if (event.type.startsWith('touch') && event.cancelable) {
       event.preventDefault();
     }
@@ -728,7 +731,7 @@ export default function Home() {
           
           const scaleFactor = currentDistance / pinchStartData.initialPinchDistance;
           let newScale = pinchStartData.initialScale * scaleFactor;
-          newScale = Math.max(minScale, Math.min(maxScale, newScale)); // Clamp scale
+          newScale = Math.max(minScale, Math.min(maxScale, newScale)); 
 
           if (containerRef.current && isFinite(newScale)) {
             const rect = containerRef.current.getBoundingClientRect();
@@ -870,11 +873,11 @@ export default function Home() {
         setQuickPressStartInfo(null);
       }
 
-      // General reset for background interactions if not already handled by pinch or quick press
-      if (interactionMode !== 'none' && interactionMode !== 'pinchZooming') { // Avoid resetting pinch if one finger still down for some reason
+      
+      if (interactionMode !== 'none' && interactionMode !== 'pinchZooming') { 
           setInteractionMode('none');
       }
-      setPanStartCoords(null); // Always reset panStartCoords on any interaction end
+      setPanStartCoords(null); 
     };
 
     if (currentContainerRef) {
@@ -882,6 +885,7 @@ export default function Home() {
       currentContainerRef.addEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener, { passive: false });
     }
 
+    
     if (activeInteractionNodeId || interactionMode !== 'none') {
       window.addEventListener('mousemove', handleMove);
       window.addEventListener('mouseup', handleEnd);
@@ -1078,13 +1082,15 @@ export default function Home() {
             alert("Uploaded file has invalid node or edge structure.");
             return;
           }
-
+          
+          setInitialLoadAndCenteringComplete(false); // Allow re-centering if "Main" node exists in new data
           setNodes(data.nodes as Node[]);
           setEdges(data.edges as Edge[]);
           await saveNodesToFileCallback(data.nodes as Node[]);
           await saveEdgesToFileCallback(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
-          await loadInitialData(); 
+          // loadInitialData will be called due to state changes, no need to call explicitly
+          // if nodes/edges are dependencies of loadInitialData's useEffect
         } else {
           alert("Invalid file format. Expected JSON with 'nodes' and 'edges' arrays.");
         }
