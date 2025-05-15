@@ -196,7 +196,7 @@ export default function Home() {
   }, []);
 
 
-  const loadInitialData = useCallback(async () => {
+ const loadInitialData = useCallback(async () => {
     if (typeof window === 'undefined') return; 
 
     let loadedNodes: Node[] = [];
@@ -215,13 +215,11 @@ export default function Home() {
         loadedEdges = [];
     }
 
-
     let nodesToSet = loadedNodes;
-    let mainNodeFoundAndCentered = false;
 
-    if (loadedNodes.length > 0 && containerWidth > 0 ) {
+    if (loadedNodes.length > 0 && containerWidth > 0) {
       const mainNode = loadedNodes.find(n => n.tags.includes("Main"));
-      if (mainNode) { 
+      if (mainNode) {
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
@@ -234,8 +232,8 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
-            await saveNodesToFileCallback(nodesToSet); // Save after adjustment
+            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
+            await saveNodesToFileCallback(nodesToSet); 
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
@@ -244,7 +242,6 @@ export default function Home() {
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
-        mainNodeFoundAndCentered = true;
       }
     }
     setNodes(nodesToSet);
@@ -1167,31 +1164,18 @@ export default function Home() {
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
             
-            let activeTransform = '';
-            if (activeInteractionNodeId === node.id) {
-                if (isLinkingModeActive && linkingSourceNodeId === node.id) {
-                    // Apply scale if it's the source node in linking mode
-                    activeTransform = ' scale(1.05)';
-                } else if (isDraggingForReposition) {
-                    // No scale if simply dragging for repositioning
-                    activeTransform = ''; 
-                } else if (!isDraggingForReposition && !isLinkingModeActive) {
-                    // Could be a pending click or press-hold release, apply scale for visual feedback
-                     activeTransform = ' scale(1.05)';
-                }
-            }
-
-
-            const zIndexValue = activeInteractionNodeId === node.id ? 20 : (isDraggingForReposition || isLinkingModeActive ? 15 : 10);
-
+            // Reverted to left/top positioning and removed active scaling transform for simplicity
+            // to align drag "feel" with edge linking preview.
             const nodeStyles: React.CSSProperties = {
               position: 'absolute',
-              transform: `translate(${node.x}px, ${node.y}px)${activeTransform}`,
+              left: `${node.x}px`,
+              top: `${node.y}px`,
+              transform: (isLinkingModeActive && linkingSourceNodeId === node.id) ? 'scale(1.05)' : '', // Scale only for linking source node
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))", 
               color: "hsl(var(--card-foreground))",     
-              zIndex: zIndexValue,
+              zIndex: activeInteractionNodeId === node.id ? 20 : 10, // Keep active node on top
               borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
@@ -1200,15 +1184,17 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease, transform 0.2s ease', 
+              transition: 'box-shadow 0.2s ease', // Transition only boxShadow
               userSelect: 'none', 
               border: '1px solid hsl(var(--border))' 
             };
+
             if (node.type === 'entity') { 
               nodeStyles.borderColor = 'hsl(var(--ring))'; 
               nodeStyles.borderWidth = '2px';
             }
 
+            // Keep enhanced shadow for active interaction (drag or link)
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
             }
@@ -1492,3 +1478,4 @@ export default function Home() {
     </main>
   );
 }
+
