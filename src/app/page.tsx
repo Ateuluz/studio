@@ -57,7 +57,7 @@ function calculateScreenGridLinePositions(
   containerWidth: number, 
   containerHeight: number 
 ): ScreenGridData {
-  if (containerWidth <= 0 || containerHeight <= 0 || scale === 0) {
+  if (containerWidth <= 0 || containerHeight <= 0 || scale === 0 || !isFinite(scale)) {
     return { verticalLines: [], horizontalLines: [] };
   }
 
@@ -125,6 +125,15 @@ function formatTagsWithDates(tags: EdgeTag[]): string {
   }).join(', ');
 }
 
+type InteractionMode = 'none' | 'backgroundQuickPressCandidate' | 'backgroundPanning' | 'pinchZooming';
+
+interface PinchStartData {
+  initialPinchDistance: number;
+  initialScale: number;
+  pinchMidpointWorld: { x: number; y: number };
+}
+
+
 export default function Home() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -168,9 +177,10 @@ export default function Home() {
   const [linkingLinePreview, setLinkingLinePreview] = useState<{x1: number, y1: number, x2: number, y2: number} | null>(null);
 
   // Canvas interaction states
-  const [interactionMode, setInteractionMode] = useState<'none' | 'backgroundQuickPressCandidate' | 'backgroundPanning' | 'pinchZooming'>('none');
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('none');
   const [panStartCoords, setPanStartCoords] = useState<{ x: number; y: number } | null>(null);
   const [quickPressStartInfo, setQuickPressStartInfo] = useState<{ screenX: number, screenY: number, worldX: number, worldY: number, time: number } | null>(null);
+  const [pinchStartData, setPinchStartData] = useState<PinchStartData | null>(null);
 
 
   const [showSearchBar, setShowSearchBar] = useState(false);
@@ -269,7 +279,7 @@ export default function Home() {
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
-    if (!containerRef.current || scale === 0) return { x: 0, y: 0 }; 
+    if (!containerRef.current || scale === 0 || !isFinite(scale)) return { x: 0, y: 0 }; 
     const rect = containerRef.current.getBoundingClientRect();
     const worldX = (screenX - rect.left - offsetX) / scale;
     const worldY = (screenY - rect.top - offsetY) / scale;
@@ -278,7 +288,7 @@ export default function Home() {
 
  useEffect(() => {
     if (activeInteractionNodeId) return; 
-    if (!containerRef.current || containerWidth === 0 || scale === 0) return;
+    if (!containerRef.current || containerWidth === 0 || scale === 0 || !isFinite(scale)) return;
 
     const nodesToConsider = nodes;
 
@@ -369,7 +379,7 @@ export default function Home() {
   }, [panYSliderLimits, offsetY, activeInteractionNodeId]);
 
   const createNode = async () => {
-    if (newNodeName && containerWidth > 0 && scale !== 0) {
+    if (newNodeName && containerWidth > 0 && scale !== 0 && isFinite(scale)) {
       
       let currentNodesForCreation = [...nodes];
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
@@ -603,6 +613,20 @@ export default function Home() {
     setPressHoldTimer(timer);
   };
 
+  const getDistance = (touches: TouchList) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const getMidpoint = (touches: TouchList) => {
+    return {
+      x: (touches[0].clientX + touches[1].clientX) / 2,
+      y: (touches[0].clientY + touches[1].clientY) / 2,
+    };
+  };
+
+
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
     const targetElement = event.target as HTMLElement;
 
@@ -613,11 +637,29 @@ export default function Home() {
       return; 
     }
     
+    if (event.type.startsWith('touch')) {
+        const touchEvent = event as React.TouchEvent;
+        if (touchEvent.touches.length === 2) {
+            if (touchEvent.cancelable) touchEvent.preventDefault();
+            setInteractionMode('pinchZooming');
+            const initialDistance = getDistance(touchEvent.touches);
+            const screenMid = getMidpoint(touchEvent.touches);
+            const worldMid = screenToWorld(screenMid.x, screenMid.y);
+            setPinchStartData({
+                initialPinchDistance: initialDistance,
+                initialScale: scale,
+                pinchMidpointWorld: worldMid,
+            });
+            setPanStartCoords(null);
+            setQuickPressStartInfo(null);
+            return;
+        }
+    }
+     // For single touch or mouse down
     if (event.type.startsWith('touch') && event.cancelable) {
       event.preventDefault();
     }
-
-    const point = 'touches' in event ? event.touches[0] : event;
+    const point = 'touches' in event ? (event as React.TouchEvent).touches[0] : (event as React.MouseEvent);
     const screenCoords = { x: point.clientX, y: point.clientY };
     const worldCoords = screenToWorld(point.clientX, point.clientY);
 
@@ -630,8 +672,10 @@ export default function Home() {
       worldY: worldCoords.y, 
       time: Date.now() 
     });
+    setPinchStartData(null);
 
-  }, [screenToWorld]); 
+
+  }, [screenToWorld, scale]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -676,16 +720,35 @@ export default function Home() {
             }));
           }
         }
+      } else if (interactionMode === 'pinchZooming' && pinchStartData && 'touches' in event && (event as TouchEvent).touches.length === 2) {
+          if (event.cancelable) event.preventDefault();
+          const touches = (event as TouchEvent).touches;
+          const currentDistance = getDistance(touches);
+          const currentScreenMidpoint = getMidpoint(touches);
+          
+          const scaleFactor = currentDistance / pinchStartData.initialPinchDistance;
+          let newScale = pinchStartData.initialScale * scaleFactor;
+          newScale = Math.max(minScale, Math.min(maxScale, newScale)); // Clamp scale
+
+          if (containerRef.current && isFinite(newScale)) {
+            const rect = containerRef.current.getBoundingClientRect();
+            const newOffsetX = currentScreenMidpoint.x - rect.left - (pinchStartData.pinchMidpointWorld.x * newScale);
+            const newOffsetY = currentScreenMidpoint.y - rect.top - (pinchStartData.pinchMidpointWorld.y * newScale);
+
+            setScale(newScale);
+            setOffsetX(newOffsetX);
+            setOffsetY(newOffsetY);
+          }
       }
       else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords && quickPressStartInfo) {
-        const point = 'touches' in event ? event.touches[0] : event;
+        const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
         const currentX = point.clientX;
         const currentY = point.clientY;
         if (Math.abs(currentX - quickPressStartInfo.screenX) > DRAG_MOVE_THRESHOLD || Math.abs(currentY - quickPressStartInfo.screenY) > DRAG_MOVE_THRESHOLD) {
           setInteractionMode('backgroundPanning');
         }
       } else if (interactionMode === 'backgroundPanning' && panStartCoords) {
-        const point = 'touches' in event ? event.touches[0] : event;
+        const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
         const dx = point.clientX - panStartCoords.x;
         const dy = point.clientY - panStartCoords.y;
         setOffsetX(prev => prev + dx);
@@ -701,7 +764,7 @@ export default function Home() {
           setPressHoldTimer(null);
         }
 
-        const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+        const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
         if (!point || !containerRef.current) {
           if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
           setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
@@ -743,7 +806,6 @@ export default function Home() {
                   const updatedNodes = nodes.map(n => {
                       if (n.id === linkingSourceNodeId) {
                           const nodeDim = getNodeDimension(n);
-                          // Adjust release position by dragOffset for consistency
                           let newX = worldMouseReleasePos.x - (dragOffset?.x || (nodeDim/2));
                           let newY = worldMouseReleasePos.y - (dragOffset?.y || (nodeDim/2));
                           return { ...n, x: newX, y: newY };
@@ -786,9 +848,14 @@ export default function Home() {
         setIsLinkingModeActive(false);
         setLinkingSourceNodeId(null);
         setLinkingLinePreview(null);
-      } 
+      } else if (interactionMode === 'pinchZooming') {
+        if ('touches' in event && (event as TouchEvent).touches.length < 2) {
+            setInteractionMode('none');
+            setPinchStartData(null);
+        }
+      }
       else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
-        const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+        const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
         const releaseTime = Date.now();
         const duration = releaseTime - quickPressStartInfo.time;
         const screenDistanceMoved = Math.sqrt(
@@ -803,8 +870,11 @@ export default function Home() {
         setQuickPressStartInfo(null);
       }
 
-      setInteractionMode('none');
-      setPanStartCoords(null);
+      // General reset for background interactions if not already handled by pinch or quick press
+      if (interactionMode !== 'none' && interactionMode !== 'pinchZooming') { // Avoid resetting pinch if one finger still down for some reason
+          setInteractionMode('none');
+      }
+      setPanStartCoords(null); // Always reset panStartCoords on any interaction end
     };
 
     if (currentContainerRef) {
@@ -837,7 +907,7 @@ export default function Home() {
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
       isEditEdgeDialogOpen, getNodeDimension, containerWidth, findExistingEdge, screenToWorld, 
       scale, offsetX, offsetY, saveNodesToFileCallback, saveEdgesToFileCallback,
-      interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart 
+      interactionMode, panStartCoords, quickPressStartInfo, handleCanvasInteractionStart, pinchStartData
   ]);
 
 
@@ -966,7 +1036,7 @@ export default function Home() {
   const maxScale = 1.5;
 
   const screenGridData = useMemo(() => {
-    if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0 || scale === 0) {
+    if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0 || scale === 0 || !isFinite(scale)) {
       return { verticalLines: [], horizontalLines: [] };
     }
     return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
@@ -1164,18 +1234,15 @@ export default function Home() {
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
             
-            // Reverted to left/top positioning and removed active scaling transform for simplicity
-            // to align drag "feel" with edge linking preview.
             const nodeStyles: React.CSSProperties = {
               position: 'absolute',
               left: `${node.x}px`,
               top: `${node.y}px`,
-              transform: (isLinkingModeActive && linkingSourceNodeId === node.id) ? 'scale(1.05)' : '', // Scale only for linking source node
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))", 
               color: "hsl(var(--card-foreground))",     
-              zIndex: activeInteractionNodeId === node.id ? 20 : 10, // Keep active node on top
+              zIndex: activeInteractionNodeId === node.id ? 20 : 10, 
               borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
@@ -1184,7 +1251,7 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease', // Transition only boxShadow
+              transition: 'box-shadow 0.2s ease', 
               userSelect: 'none', 
               border: '1px solid hsl(var(--border))' 
             };
@@ -1193,8 +1260,7 @@ export default function Home() {
               nodeStyles.borderColor = 'hsl(var(--ring))'; 
               nodeStyles.borderWidth = '2px';
             }
-
-            // Keep enhanced shadow for active interaction (drag or link)
+            
             if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
             }
