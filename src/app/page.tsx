@@ -29,7 +29,7 @@ const CONTAINER_HEIGHT_PX = 500;
 
 const PRESS_HOLD_THRESHOLD = 700; // ms
 const DRAG_MOVE_THRESHOLD = 5; // pixels - Changed from 10 to 5
-const QUICK_PRESS_DURATION_THRESHOLD = 250; // ms
+const QUICK_PRESS_DURATION_THRESHOLD = 70; // ms - Drastically reduced from 250ms
 const MAX_PLACEMENT_ATTEMPTS = 30;
 
 const REPULSION_STRENGTH = 0.5;
@@ -232,7 +232,7 @@ export default function Home() {
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
-        setActiveInteractionNodeId(null);
+        setActiveInteractionNodeId(null); 
         
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
@@ -246,7 +246,7 @@ export default function Home() {
         await saveNodesToFileCallback(nodesToSet);
     }
 
-  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback, setNodes, setEdges, setOffsetX, setOffsetY, setActiveInteractionNodeId]);
+  }, [containerWidth, getNodeDimension, scale, saveNodesToFileCallback]);
 
 
   useEffect(() => {
@@ -356,7 +356,7 @@ export default function Home() {
     if (currentClampedOffsetX !== offsetX && isFinite(currentClampedOffsetX)) {
         setOffsetX(currentClampedOffsetX);
     }
-  }, [panXSliderLimits, offsetX, activeInteractionNodeId, setOffsetX]);
+  }, [panXSliderLimits, offsetX, activeInteractionNodeId]);
 
   // Effect to clamp offsetY
   useEffect(() => {
@@ -365,7 +365,7 @@ export default function Home() {
     if (currentClampedOffsetY !== offsetY && isFinite(currentClampedOffsetY)) {
         setOffsetY(currentClampedOffsetY);
     }
-  }, [panYSliderLimits, offsetY, activeInteractionNodeId, setOffsetY]);
+  }, [panYSliderLimits, offsetY, activeInteractionNodeId]);
 
   const createNode = async () => {
     if (newNodeName && containerWidth > 0 && scale !== 0) {
@@ -391,8 +391,6 @@ export default function Home() {
         newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
         
-        // Simple overlap check for the specific creation point
-        // More robust overlap avoidance might be needed if this spot is taken.
         let overlapWithExistingAtPending = false;
         for (const existingNode of currentNodesForCreation) {
             const existingNodeDimension = getNodeDimension(existingNode);
@@ -410,7 +408,7 @@ export default function Home() {
         setPendingNodeCreationCoords(null); 
       }
       
-      if (!placed) { // Fallback to random placement if pending coords were invalid or not set
+      if (!placed) { 
         let attempts = 0;
         const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
         const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
@@ -473,7 +471,7 @@ export default function Home() {
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
     setActiveInteractionNodeId(null); 
-  }, [setEditingNode, setEditNodeName, setEditNodeDescription, setEditNodeTags, setEditNodeBirthday, setIsEditNodeDialogOpen, setActiveInteractionNodeId]);
+  }, []);
 
   const saveNodeChanges = async () => {
     if (editingNode && editNodeName) {
@@ -632,7 +630,7 @@ export default function Home() {
       time: Date.now() 
     });
 
-  }, [screenToWorld, setInteractionMode, setPanStartCoords, setQuickPressStartInfo]); 
+  }, [screenToWorld]); 
 
   useEffect(() => {
     const currentContainerRef = containerRef.current;
@@ -678,11 +676,11 @@ export default function Home() {
           }
         }
       }
-      else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords) {
+      else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords && quickPressStartInfo) {
         const point = 'touches' in event ? event.touches[0] : event;
         const currentX = point.clientX;
         const currentY = point.clientY;
-        if (Math.abs(currentX - panStartCoords.x) > DRAG_MOVE_THRESHOLD || Math.abs(currentY - panStartCoords.y) > DRAG_MOVE_THRESHOLD) {
+        if (Math.abs(currentX - quickPressStartInfo.screenX) > DRAG_MOVE_THRESHOLD || Math.abs(currentY - quickPressStartInfo.screenY) > DRAG_MOVE_THRESHOLD) {
           setInteractionMode('backgroundPanning');
         }
       } else if (interactionMode === 'backgroundPanning' && panStartCoords) {
@@ -928,7 +926,7 @@ export default function Home() {
       }, 50); 
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode]); 
 
   useEffect(() => { 
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
@@ -957,7 +955,7 @@ export default function Home() {
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes, saveNodesToFileCallback]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode]);
 
 
   const [isClient, setIsClient] = useState(false);
@@ -1476,3 +1474,5 @@ export default function Home() {
   );
 }
 
+
+    
