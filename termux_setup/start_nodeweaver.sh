@@ -31,6 +31,10 @@ if [ -d "${APP_DIR}" ]; then
   echo "To stop the server, press Ctrl+C."
   echo "Access the app at http://localhost:9002 or http://<your_phone_ip>:9002 from other devices on the same network."
   
+  # Attempt to open the URL in a browser after a short delay
+  # This gives the server a moment to start up.
+  (sleep 5 && termux-open-url http://localhost:9002) &
+
   # The package.json dev script is configured for:
   # next dev --turbopack -H 0.0.0.0 -p 9002
   npm run dev
@@ -38,3 +42,4 @@ else
   echo "ERROR: Directory ${APP_DIR} does not exist."
   echo "Please edit this script (start_nodeweaver.sh) and set the APP_DIR variable to the correct path of your Node Weaver application."
 fi
+
