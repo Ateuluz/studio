@@ -57,6 +57,7 @@ function linearToLogScale(
   logMax: number
 ): number {
   if (logMin <= 0 || logMax <= 0) {
+    console.warn("Logarithmic scale min/max must be positive.");
     return logMin; 
   }
   if (linearMin === linearMax) return logMin; 
@@ -75,18 +76,20 @@ function logToLinearScale(
   linearMax: number
 ): number {
   if (logValue <= 0 || logMin <= 0 || logMax <= 0) {
+    console.warn("Logarithmic scale values must be positive for conversion.");
     return linearMin; 
   }
   
+  // Clamp logValue to be within [logMin, logMax] to avoid issues with Math.log
   const clampedLogValue = Math.max(logMin, Math.min(logMax, logValue));
 
-  if (logMin === logMax) return linearMin; 
+  if (logMin === logMax) return linearMin; // Avoid division by zero if logMin equals logMax
 
   const G = logMax / logMin;
-  if (G === 1) return linearMin; 
+  if (G === 1) return linearMin; // Avoid Math.log(1) which is 0, leading to division by zero if logG is used as denominator
   
   const logRatio = clampedLogValue / logMin;
-  if (logRatio <= 0) return linearMin; 
+  if (logRatio <= 0) return linearMin; // log of non-positive is undefined
 
   return linearMin + (linearMax - linearMin) * (Math.log(logRatio) / Math.log(G));
 }
@@ -265,6 +268,13 @@ export default function Home() {
     await saveEdgesToFile(currentEdges);
   }, []);
 
+  const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
+    if (!containerRef.current || scale === 0 || !isFinite(scale)) return { x: 0, y: 0 }; 
+    const rect = containerRef.current.getBoundingClientRect();
+    const worldX = (screenX - rect.left - offsetX) / scale;
+    const worldY = (screenY - rect.top - offsetY) / scale;
+    return { x: worldX, y: worldY };
+  }, [offsetX, offsetY, scale]);
 
  const loadInitialData = useCallback(async () => {
     if (typeof window === 'undefined') return; 
@@ -341,14 +351,6 @@ export default function Home() {
   }, [loadInitialData, initialLoadAndCenteringComplete]); 
 
 
-  const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
-    if (!containerRef.current || scale === 0 || !isFinite(scale)) return { x: 0, y: 0 }; 
-    const rect = containerRef.current.getBoundingClientRect();
-    const worldX = (screenX - rect.left - offsetX) / scale;
-    const worldY = (screenY - rect.top - offsetY) / scale;
-    return { x: worldX, y: worldY };
-  }, [offsetX, offsetY, scale]);
-
  useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return; 
     if (!containerRef.current || containerWidth === 0 || containerHeight === 0 || scale === 0 || !isFinite(scale)) return;
@@ -420,7 +422,7 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]); 
+  }, [nodes, scale, containerWidth, containerHeight, activeInteractionNodeId, getNodeDimension, interactionMode]); 
 
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
@@ -714,6 +716,7 @@ export default function Home() {
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
+            // Clear any node-specific interaction if pinch-zoom starts
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
@@ -819,8 +822,8 @@ export default function Home() {
             const newOffsetY = currentScreenMidpoint.y - rect.top - (pinchStartData.pinchMidpointWorld.y * newScale);
 
             setScale(newScale);
-            setOffsetX(newOffsetX);
-            setOffsetY(newOffsetY);
+            setOffsetX(Math.round(newOffsetX));
+            setOffsetY(Math.round(newOffsetY));
           }
       }
       else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords && quickPressStartInfo) {
@@ -834,8 +837,8 @@ export default function Home() {
         const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
         const dx = point.clientX - panStartCoords.x;
         const dy = point.clientY - panStartCoords.y;
-        setOffsetX(prev => prev + dx);
-        setOffsetY(prev => prev + dy);
+        setOffsetX(prev => Math.round(prev + dx));
+        setOffsetY(prev => Math.round(prev + dy));
         setPanStartCoords({ x: point.clientX, y: point.clientY }); 
       }
     };
@@ -998,7 +1001,7 @@ export default function Home() {
       setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
-      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords 
+      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight // Added containerHeight
   ]);
 
 
@@ -1250,8 +1253,8 @@ export default function Home() {
           size="icon"
           className="absolute top-2 left-2 z-50 bg-card/80 backdrop-blur-sm text-foreground hover:bg-accent hover:text-accent-foreground"
           onClick={(e) => {
-            setIsSliderPanelOpen(!isSliderPanelOpen);
             (e.currentTarget as HTMLButtonElement).blur();
+            setIsSliderPanelOpen(!isSliderPanelOpen);
           }}
           aria-label={isSliderPanelOpen ? "Close controls panel" : "Open controls panel"}
         >
@@ -1275,8 +1278,30 @@ export default function Home() {
                   step={1} 
                   value={[Math.round(linearScaleSliderValue)]} 
                   onValueChange={(value) => {
-                      const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
-                      setScale(Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)));
+                      const newLinearValue = value[0];
+                      const newScaleCandidate = linearToLogScale(newLinearValue, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
+                      const finalNewScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScaleCandidate));
+
+                      if (containerRef.current && containerWidth > 0 && containerHeight > 0 && Math.abs(finalNewScale - scale) > 0.0001) {
+                          const rect = containerRef.current.getBoundingClientRect();
+                          // Absolute screen coordinates of the viewport center
+                          const absScreenCenterX = rect.left + (containerWidth / 2);
+                          const absScreenCenterY = rect.top + (containerHeight / 2);
+              
+                          // World point currently at the screen center (using PREVIOUS scale, offsetX, offsetY)
+                          const worldPointAtScreenCenter = screenToWorld(absScreenCenterX, absScreenCenterY);
+                          
+                          // Calculate new offsets to keep this worldPointAtScreenCenter at screen center with finalNewScale
+                          const newOffsetX = (containerWidth / 2) - (worldPointAtScreenCenter.x * finalNewScale);
+                          const newOffsetY = (containerHeight / 2) - (worldPointAtScreenCenter.y * finalNewScale);
+                          
+                          setScale(finalNewScale);
+                          setOffsetX(Math.round(newOffsetX));
+                          setOffsetY(Math.round(newOffsetY));
+                      } else if (Math.abs(finalNewScale - scale) > 0.0001) {
+                          // Fallback if container not fully ready, but scale should still change
+                          setScale(finalNewScale);
+                      }
                   }}
                   className="col-span-3"
               />
@@ -1298,13 +1323,13 @@ export default function Home() {
               <Label htmlFor="offset-y-slider" className="text-sm text-right col-span-1">Pan Y: {isClient ? Math.round(offsetY) : 0}</Label>
               <Slider
                   id="offset-y-slider"
-                  min={isClient && containerWidth > 0 ? Math.round(panYSliderLimits.min) : -1000}
-                  max={isClient && containerWidth > 0 ? Math.round(panYSliderLimits.max) : 1000}
+                  min={isClient && containerHeight > 0 ? Math.round(panYSliderLimits.min) : -1000}
+                  max={isClient && containerHeight > 0 ? Math.round(panYSliderLimits.max) : 1000}
                   step={1}
                   value={[Math.round(offsetY)]} 
                   onValueChange={(value) => setOffsetY(value[0])}
                   className="col-span-3"
-                  disabled={(isClient && containerWidth > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
+                  disabled={(isClient && containerHeight > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
               />
           </div>
         </div>
@@ -1465,8 +1490,8 @@ export default function Home() {
           size="icon"
           className="absolute bottom-2 right-2 z-50 bg-card/80 backdrop-blur-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded-full w-12 h-12 shadow-lg"
           onClick={(e) => {
-             setIsActionButtonsOpen(!isActionButtonsOpen);
              (e.currentTarget as HTMLButtonElement).blur();
+             setIsActionButtonsOpen(!isActionButtonsOpen);
           }}
           aria-label={isActionButtonsOpen ? "Close actions menu" : "Open actions menu"}
         >
