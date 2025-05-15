@@ -20,7 +20,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3, Search as SearchIconLucide } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3, Search as SearchIconLucide, Eye, EyeOff, Lock, Unlock } from "lucide-react";
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 import { cn } from "@/lib/utils";
@@ -40,16 +41,14 @@ const REPULSION_ITERATIONS = 10;
 
 const BASE_GRID_SIZE = 50; 
 
-// Zoom Slider Constants
 const LOG_SCALE_MIN = 0.02; 
-const LOG_SCALE_MAX = 1.2;  // 120%
+const LOG_SCALE_MAX = 1.2;  
 const LINEAR_SLIDER_MIN = 0;
 const LINEAR_SLIDER_MAX = 100;
 
 const EDGE_BASE_SCREEN_THICKNESS = 2;
 
 
-// Helper functions for logarithmic scale conversion
 function linearToLogScale(
   linearValue: number,
   linearMin: number,
@@ -81,22 +80,20 @@ function logToLinearScale(
     return linearMin; 
   }
   
-  // Clamp logValue to be within [logMin, logMax] to avoid issues with Math.log
   const clampedLogValue = Math.max(logMin, Math.min(logMax, logValue));
 
-  if (logMin === logMax) return linearMin; // Avoid division by zero if logMin equals logMax
+  if (logMin === logMax) return linearMin;
 
   const G = logMax / logMin;
-  if (G === 1) return linearMin; // Avoid Math.log(1) which is 0, leading to division by zero if logG is used as denominator
+  if (G === 1) return linearMin; 
   
   const logRatio = clampedLogValue / logMin;
-  if (logRatio <= 0) return linearMin; // log of non-positive is undefined
+  if (logRatio <= 0) return linearMin;
 
   return linearMin + (linearMax - linearMin) * (Math.log(logRatio) / Math.log(G));
 }
 
 
-// Helper functions for screen-space grid
 function getGridLineWorldSeparation(scale: number): number {
   if (scale < 0.4) return BASE_GRID_SIZE * 4;
   if (scale < 0.8) return BASE_GRID_SIZE * 2;
@@ -202,7 +199,6 @@ export default function Home() {
   const [containerHeight, setContainerHeight] = useState(0);
   const [initialLoadAndCenteringComplete, setInitialLoadAndCenteringComplete] = useState(false);
 
-
   const [isCreateNodeDialogOpen, setIsCreateNodeDialogOpen] = useState(false);
   const [newNodeName, setNewNodeName] = useState("");
   const [newNodeDescription, setNewNodeDescription] = useState("");
@@ -219,7 +215,6 @@ export default function Home() {
   const [editNodeBirthday, setEditNodeBirthday] = useState("");
   const [connectNodeSearchQuery, setConnectNodeSearchQuery] = useState("");
   const [connectNodeSearchResults, setConnectNodeSearchResults] = useState<Node[]>([]);
-
 
   const [isCreateEdgeDialogOpen, setIsCreateEdgeDialogOpen] = useState(false);
   const [newEdgeDataSourceNodeId, setNewEdgeDataSourceNodeId] = useState<string | null>(null);
@@ -257,6 +252,8 @@ export default function Home() {
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Node[]>([]);
+
+  const [isLayoutLocked, setIsLayoutLocked] = useState(false);
 
 
   const getNodeDimension = useCallback((nodeOrType: Node | Node['type']) => {
@@ -300,11 +297,11 @@ export default function Home() {
     }
 
     let nodesToSet = loadedNodes;
+    setActiveInteractionNodeId(null); 
 
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0 && containerHeight > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
-        setActiveInteractionNodeId(null); 
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
@@ -659,12 +656,11 @@ export default function Home() {
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
-    // Reset canvas-global interaction states
     setInteractionMode('none');
     setPanStartCoords(null);
     setQuickPressStartInfo(null);
     setPinchStartData(null);
-
+    
     if (event.type.startsWith('touch') && event.cancelable) event.preventDefault(); 
 
     const point = 'touches' in event ? event.touches[0] : event;
@@ -683,6 +679,11 @@ export default function Home() {
     setLinkingLinePreview(null);
 
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
+    if (isLayoutLocked) { // If layout is locked, don't start press-hold for linking
+      setPressHoldTimer(null);
+      return; 
+    }
+
     const timer = setTimeout(() => {
       if (activeInteractionNodeId === node.id && !isDraggingForReposition) { 
         setIsLinkingModeActive(true);
@@ -722,7 +723,6 @@ export default function Home() {
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
-            // Clear any node-specific interaction if pinch-zoom starts
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
@@ -799,7 +799,7 @@ export default function Home() {
                 y2: worldMousePos.y,
               });
             }
-          } else { 
+          } else if (!isLayoutLocked) { // Only allow repositioning if layout is not locked
             setIsDraggingForReposition(true);
             setNodes(prevNodes => prevNodes.map(n => {
               if (n.id === activeInteractionNodeId) {
@@ -895,7 +895,7 @@ export default function Home() {
                       setNewEdgeTagsInput("");
                       setIsCreateEdgeDialogOpen(true);
                   }
-              } else { 
+              } else if (!isLayoutLocked) { // Only move if layout not locked 
                   const updatedNodes = nodes.map(n => {
                       if (n.id === linkingSourceNodeId) {
                           const nodeDim = getNodeDimension(n);
@@ -909,7 +909,7 @@ export default function Home() {
                   await saveNodesToFileCallback(updatedNodes); 
               }
           }
-        } else if (isDraggingForReposition) { 
+        } else if (isDraggingForReposition && !isLayoutLocked) { 
           const draggedNodeId = activeInteractionNodeId; 
           if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { 
               const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
@@ -926,7 +926,7 @@ export default function Home() {
           }
           await saveNodesToFileCallback(nodes); 
         } else if (isLinkingModeActive) { 
-          // Press-hold without drag - was showSearchBar, now no-op or can be something else
+          // Press-hold without drag
         } else if (!isDraggingForReposition && !isLinkingModeActive) { 
           const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
           if (nodeToEdit) openEditNodeDialog(nodeToEdit);
@@ -958,8 +958,10 @@ export default function Home() {
         );
 
         if (duration < QUICK_PRESS_DURATION_THRESHOLD && screenDistanceMoved < DRAG_MOVE_THRESHOLD) {
-          setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
-          setIsCreateNodeDialogOpen(true);
+          if (!isLayoutLocked) { // Only allow node creation if layout is not locked
+            setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
+            setIsCreateNodeDialogOpen(true);
+          }
         }
         setQuickPressStartInfo(null); 
       }
@@ -1007,7 +1009,7 @@ export default function Home() {
       setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
-      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight 
+      setIsCreateNodeDialogOpen, setPendingNodeCreationCoords, containerHeight, isLayoutLocked 
   ]);
 
 
@@ -1245,7 +1247,6 @@ export default function Home() {
   const isCreateNodeButtonDisabled = !newNodeName.trim() || nodes.some(node => node.name.toLowerCase() === newNodeName.trim().toLowerCase());
   const isEditNodeButtonDisabled = editingNode && (!editNodeName.trim() || nodes.some(node => node.id !== editingNode?.id && node.name.toLowerCase() === editNodeName.trim().toLowerCase()));
 
-  // For in-dialog node connection search
   useEffect(() => {
     if (!editingNode || !connectNodeSearchQuery.trim()) {
       setConnectNodeSearchResults([]);
@@ -1253,7 +1254,7 @@ export default function Home() {
     }
     const lowerCaseQuery = connectNodeSearchQuery.toLowerCase();
     const filtered = nodes.filter(node =>
-      node.id !== editingNode.id && // Exclude the node being edited
+      node.id !== editingNode.id && 
       (node.name.toLowerCase().includes(lowerCaseQuery) ||
         node.tags.some(tag => tag.toLowerCase().includes(lowerCaseQuery)))
     );
@@ -1274,7 +1275,6 @@ export default function Home() {
       setNewEdgeTagsInput("");
       setIsCreateEdgeDialogOpen(true);
     }
-    // Reset search and close edit node dialog
     setConnectNodeSearchQuery("");
     setConnectNodeSearchResults([]);
     setIsEditNodeDialogOpen(false); 
@@ -1353,7 +1353,7 @@ export default function Home() {
                   value={[Math.round(offsetX)]} 
                   onValueChange={(value) => setOffsetX(value[0])}
                   className="col-span-3"
-                  disabled={(isClient && containerWidth > 0 ? (panXSliderLimits.min >= panXSliderLimits.max) : false)}
+                  disabled={!isClient || containerWidth === 0 || (panXSliderLimits.min >= panXSliderLimits.max)}
               />
           </div>
            <div className="w-full grid grid-cols-4 gap-2 items-center px-1">
@@ -1366,9 +1366,21 @@ export default function Home() {
                   value={[Math.round(offsetY)]} 
                   onValueChange={(value) => setOffsetY(value[0])}
                   className="col-span-3"
-                  disabled={(isClient && containerHeight > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
+                  disabled={!isClient || containerHeight === 0 || (panYSliderLimits.min >= panYSliderLimits.max)}
               />
           </div>
+          <Separator />
+            <div className="flex items-center space-x-2 px-1">
+                <Switch
+                    id="layout-lock-switch"
+                    checked={isLayoutLocked}
+                    onCheckedChange={setIsLayoutLocked}
+                />
+                <Label htmlFor="layout-lock-switch" className="text-sm flex items-center">
+                    {isLayoutLocked ? <Lock className="mr-2 h-4 w-4" /> : <Unlock className="mr-2 h-4 w-4" />}
+                    Layout Lock
+                </Label>
+            </div>
         </div>
 
         <svg
@@ -1554,7 +1566,11 @@ export default function Home() {
             }}
           >
             <DialogTrigger asChild>
-              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg w-full justify-start px-4 py-2">
+              <Button 
+                className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg w-full justify-start px-4 py-2"
+                disabled={isLayoutLocked}
+                title={isLayoutLocked ? "Node creation disabled while Layout Lock is active" : "Create New Node"}
+              >
                 <Plus className="mr-2 h-5 w-5" />
                 Create Node
               </Button>
@@ -1642,7 +1658,7 @@ export default function Home() {
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isCreateNodeButtonDisabled}>Create Node</Button>
+            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isCreateNodeButtonDisabled || isLayoutLocked}>Create Node</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1658,8 +1674,8 @@ export default function Home() {
             }
         }}>
           <DialogContent className="sm:max-w-[480px] bg-background text-foreground border-border shadow-2xl rounded-lg">
-          <ScrollArea className="max-h-[80vh] p-0"> {/* Adjusted padding to p-0 for ScrollArea */}
-            <div className="p-6"> {/* Added inner div for actual padding */}
+          <ScrollArea className="max-h-[80vh] p-0"> 
+            <div className="p-6"> 
               <DialogHeader>
                 <DialogTitle className="text-2xl">Edit Node: {editingNode.name}</DialogTitle>
                 <DialogDescription>Modify attributes or connect to another node.</DialogDescription>
@@ -1718,18 +1734,18 @@ export default function Home() {
                   )}
                 </div>
               </div>
-              <DialogFooter className="flex justify-between items-center pt-2"> {/* Adjusted padding for footer */}
-                <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5">
+              <DialogFooter className="flex justify-between items-center pt-2"> 
+                <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5"  disabled={isLayoutLocked} title={isLayoutLocked ? "Node deletion disabled while Layout Lock is active" : "Delete Node"}>
                   <Trash2 className="mr-2 h-5 w-5" /> Delete Node
                 </Button>
                 <div>
                   <DialogClose asChild>
                     <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null); setConnectNodeSearchQuery(""); setConnectNodeSearchResults([]);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
                   </DialogClose>
-                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled}>Save Changes</Button>
+                  <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled || isLayoutLocked} title={isLayoutLocked ? "Node editing disabled while Layout Lock is active" : "Save Changes"}>Save Changes</Button>
                 </div>
               </DialogFooter>
-            </div> {/* End of inner padding div */}
+            </div> 
           </ScrollArea>
           </DialogContent>
         </Dialog>
@@ -1765,7 +1781,7 @@ export default function Home() {
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-            <Button type="submit" onClick={createEdge} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5"><Link2 className="mr-2 h-5 w-5" />Create Edge</Button>
+            <Button type="submit" onClick={createEdge} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isLayoutLocked} title={isLayoutLocked ? "Edge creation disabled while Layout Lock is active" : "Create Edge"}><Link2 className="mr-2 h-5 w-5" />Create Edge</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1797,14 +1813,14 @@ export default function Home() {
               </div>
             </div>
             <DialogFooter className="flex justify-between"> 
-              <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto">
+              <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto" disabled={isLayoutLocked} title={isLayoutLocked ? "Edge deletion disabled while Layout Lock is active" : "Delete Edge"}>
                 <Trash2 className="mr-2 h-5 w-5" /> Delete Edge
               </Button>
               <div>
                 <DialogClose asChild>
                   <Button variant="outline" className="text-md px-5 py-2.5 mr-2">Cancel</Button>
                 </DialogClose>
-                <Button type="submit" onClick={saveEdgeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">
+                <Button type="submit" onClick={saveEdgeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isLayoutLocked} title={isLayoutLocked ? "Edge editing disabled while Layout Lock is active" : "Save Changes"}>
                   Save Changes
                 </Button>
               </div>
@@ -1861,6 +1877,8 @@ export default function Home() {
     </main>
   );
 }
+    
+
     
 
     
