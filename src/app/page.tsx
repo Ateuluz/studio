@@ -303,7 +303,7 @@ export default function Home() {
                 y: node.y + deltaY,
             }));
             nodesToSet = adjustedNodes;
-            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; // Re-find the main node after adjustment
+            mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode; 
             await saveNodesToFileCallback(nodesToSet); 
         }
         
@@ -325,7 +325,7 @@ export default function Home() {
       const rect = containerRef.current.getBoundingClientRect();
       setContainerWidth(rect.width);
       setContainerHeight(rect.height);
-       if (rect.height > 0 && !initialLoadAndCenteringComplete) { // Trigger initial load if height is available
+       if (rect.height > 0 && !initialLoadAndCenteringComplete) { 
          loadInitialData();
        }
     }
@@ -338,9 +338,7 @@ export default function Home() {
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [loadInitialData, initialLoadAndCenteringComplete]); // Added loadInitialData and initialLoadAndCenteringComplete
-
-  // Removed the separate useEffect for loadInitialData based on containerHeight
+  }, [loadInitialData, initialLoadAndCenteringComplete]); 
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
@@ -716,7 +714,6 @@ export default function Home() {
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
-            // Give pinch-zoom precedence: clear any active node interaction
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
@@ -1225,7 +1222,7 @@ export default function Home() {
 
   const handleSearchResultClick = (node: Node) => {
     setIsSearchDialogOpen(false);
-    setSearchQuery(""); // Clear search query
+    setSearchQuery(""); 
     
     const nodeDimension = getNodeDimension(node.type);
     const targetOffsetX = (containerWidth / 2) - (node.x + nodeDimension / 2) * scale;
@@ -1233,9 +1230,12 @@ export default function Home() {
 
     setOffsetX(Math.round(targetOffsetX));
     setOffsetY(Math.round(targetOffsetY));
-    // Optionally, set a default scale:
-    // setScale(1); 
+    setScale(1.0); 
   };
+  
+  const isCreateNodeButtonDisabled = !newNodeName.trim() || nodes.some(node => node.name.toLowerCase() === newNodeName.trim().toLowerCase());
+  const isEditNodeButtonDisabled = editingNode && (!editNodeName.trim() || nodes.some(node => node.id !== editingNode?.id && node.name.toLowerCase() === editNodeName.trim().toLowerCase()));
+
 
   return (
     <main className="flex flex-col items-center h-screen bg-background text-foreground overflow-hidden"> 
@@ -1502,7 +1502,7 @@ export default function Home() {
             open={isSearchDialogOpen} 
             onOpenChange={(isOpen) => {
               setIsSearchDialogOpen(isOpen);
-              if (!isOpen) { setSearchQuery(""); setSearchResults([]); } // Clear search on close
+              if (!isOpen) { setSearchQuery(""); setSearchResults([]); } 
             }}
           >
             <DialogTrigger asChild>
@@ -1580,7 +1580,7 @@ export default function Home() {
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline" className="text-md px-5 py-2.5">Cancel</Button></DialogClose>
-            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Create Node</Button>
+            <Button type="submit" onClick={createNode} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={isCreateNodeButtonDisabled}>Create Node</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1627,7 +1627,7 @@ export default function Home() {
                 <DialogClose asChild>
                   <Button variant="outline" onClick={() => { setIsEditNodeDialogOpen(false); setEditingNode(null); setActiveInteractionNodeId(null);}} className="text-md px-5 py-2.5 mr-2">Cancel</Button>
                 </DialogClose>
-                <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5">Save Changes</Button>
+                <Button type="submit" onClick={saveNodeChanges} className="bg-primary text-primary-foreground hover:bg-primary/90 text-md px-5 py-2.5" disabled={!!isEditNodeButtonDisabled}>Save Changes</Button>
               </div>
             </DialogFooter>
           </DialogContent>
