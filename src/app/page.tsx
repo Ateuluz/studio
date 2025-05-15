@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Plus, Link2, Trash2, Download, Upload, Settings, ChevronsUpDown, XIcon, Rows3 } from "lucide-react";
+import { Plus, Link2, Trash2, Download, Upload, Settings, XIcon, Rows3 } from "lucide-react";
 import type { Node, Edge, EdgeTag } from "@/lib/types";
 import { loadNodesFromFile, saveNodesToFile, loadEdgesFromFile, saveEdgesToFile } from "./data-actions";
 import { cn } from "@/lib/utils";
@@ -57,10 +57,11 @@ function linearToLogScale(
   logMax: number
 ): number {
   if (logMin <= 0 || logMax <= 0) {
-    return logMin; 
+    // console.warn("Logarithmic scale min/max must be positive.");
+    return logMin; // Or handle as an error, depending on requirements
   }
-  if (linearMin === linearMax) return logMin; 
-  if (logMin === logMax) return logMin; 
+  if (linearMin === linearMax) return logMin; // Avoid division by zero if linear range is a point
+  if (logMin === logMax) return logMin; // Avoid issues if log range is a point
 
   const G = logMax / logMin;
   const exponent = (linearValue - linearMin) / (linearMax - linearMin);
@@ -75,18 +76,20 @@ function logToLinearScale(
   linearMax: number
 ): number {
   if (logValue <= 0 || logMin <= 0 || logMax <= 0) {
-    return linearMin; 
+    // console.warn("Logarithmic values for conversion must be positive.");
+    return linearMin; // Or handle as an error
   }
   
+  // Clamp logValue to be within [logMin, logMax] to avoid issues with Math.log
   const clampedLogValue = Math.max(logMin, Math.min(logMax, logValue));
 
-  if (logMin === logMax) return linearMin; 
+  if (logMin === logMax) return linearMin; // Avoid division by zero if log range is a point
 
   const G = logMax / logMin;
-  if (G === 1) return linearMin; 
+  if (G === 1) return linearMin; // Avoid Math.log(1) which is 0, if logMin === logMax handled above
   
   const logRatio = clampedLogValue / logMin;
-  if (logRatio <= 0) return linearMin; 
+  if (logRatio <= 0) return linearMin; // Avoid Math.log of non-positive number
 
   return linearMin + (linearMax - linearMin) * (Math.log(logRatio) / Math.log(G));
 }
@@ -118,22 +121,26 @@ function calculateScreenGridLinePositions(
   const worldSeparation = getGridLineWorldSeparation(scale); 
   const screenSeparation = worldSeparation * scale; 
 
-  if (screenSeparation < 5 || !isFinite(screenSeparation)) { 
+  if (screenSeparation < 5 || !isFinite(screenSeparation)) { // Avoid overly dense or infinite grids
     return { verticalLines: [], horizontalLines: [] };
   }
 
   const verticalLines: number[] = [];
   const horizontalLines: number[] = [];
 
+  // World coordinates of the top-left of the viewport
   const worldViewTopLeftX = -offsetX / scale;
   const worldViewTopLeftY = -offsetY / scale;
 
+  // Calculate the first and last multiples of worldSeparation that are visible or near the viewport
+  // This ensures lines extend slightly beyond the viewport edges for smooth panning
   const firstVerticalWorldLine_k = Math.floor(worldViewTopLeftX / worldSeparation);
   const lastVerticalWorldLine_k = Math.ceil((worldViewTopLeftX + containerWidth / scale) / worldSeparation);
 
   for (let k = firstVerticalWorldLine_k; k <= lastVerticalWorldLine_k; k++) {
     const worldX = k * worldSeparation;
-    const screenX = worldX * scale + offsetX; 
+    const screenX = worldX * scale + offsetX; // Convert world X to screen X
+    // Only add lines that are within or very close to the viewport screen boundaries
     if (screenX >= -screenSeparation && screenX <= containerWidth + screenSeparation) {
       verticalLines.push(screenX);
     }
@@ -144,7 +151,7 @@ function calculateScreenGridLinePositions(
   
   for (let k = firstHorizontalWorldLine_k; k <= lastHorizontalWorldLine_k; k++) {
     const worldY = k * worldSeparation;
-    const screenY = worldY * scale + offsetY; 
+    const screenY = worldY * scale + offsetY; // Convert world Y to screen Y
     if (screenY >= -screenSeparation && screenY <= containerHeight + screenSeparation) {
       horizontalLines.push(screenY);
     }
@@ -157,16 +164,18 @@ function calculateScreenGridLinePositions(
 function parseTagsWithDates(tagsInput: string): EdgeTag[] {
   if (!tagsInput.trim()) return [];
   const tagEntries = tagsInput.split(',').map(entry => entry.trim());
+  // Regex to capture tag name and an optional date in YYYY-MM-DD format in parentheses
   const regex = /^(.*?)(?:\s*\((....-..-..)\))?$/; 
   return tagEntries.map(entry => {
     const match = entry.match(regex);
     if (match) {
       const name = match[1].trim();
-      const date = match[2]; 
+      const date = match[2]; // This will be undefined if no date part is found
       return { name, date: date || undefined };
     }
+    // Fallback for entries that don't match the regex (e.g., malformed)
     return { name: entry.trim() }; 
-  }).filter(tag => tag.name); 
+  }).filter(tag => tag.name); // Ensure tags have a name
 }
 
 function formatTagsWithDates(tags: EdgeTag[]): string {
@@ -290,12 +299,13 @@ export default function Home() {
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
-        setActiveInteractionNodeId(null); 
+        setActiveInteractionNodeId(null); // Ensure no node is active during this programmatic shift
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
         let mainNodeAfterAdjustment = mainNode;
 
+        // Only adjust if there's a significant delta
         if (Math.abs(deltaX) > 0.0001 || Math.abs(deltaY) > 0.0001) { 
             const adjustedNodes = nodesToSet.map(node => ({
                 ...node,
@@ -304,11 +314,12 @@ export default function Home() {
             }));
             nodesToSet = adjustedNodes;
             mainNodeAfterAdjustment = nodesToSet.find(n => n.id === mainNode.id) || mainNode;
-            await saveNodesToFileCallback(nodesToSet); 
+            await saveNodesToFileCallback(nodesToSet); // Persist the centered state
         }
         
         const mainNodeDimension = getNodeDimension(mainNodeAfterAdjustment.type);
         
+        // Center the "Main" node visually by accounting for its dimensions
         setOffsetX(Math.round((containerWidth / 2) - (mainNodeDimension / 2) * scale));
         setOffsetY(Math.round((CONTAINER_HEIGHT_PX / 2) - (mainNodeDimension / 2) * scale));
       }
@@ -339,7 +350,7 @@ export default function Home() {
 
 
   const screenToWorld = useCallback((screenX: number, screenY: number): { x: number, y: number } => {
-    if (!containerRef.current || scale === 0 || !isFinite(scale)) return { x: 0, y: 0 }; 
+    if (!containerRef.current || scale === 0 || !isFinite(scale)) return { x: 0, y: 0 }; // Added !isFinite(scale)
     const rect = containerRef.current.getBoundingClientRect();
     const worldX = (screenX - rect.left - offsetX) / scale;
     const worldY = (screenY - rect.top - offsetY) / scale;
@@ -360,6 +371,7 @@ export default function Home() {
       contentMinYWorld = Math.min(...nodesToConsider.map(n => n.y));
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
+      // For empty world, define a default content area based on viewport size
       const defaultContentWorldWidth = (containerWidth || 1) / Math.max(scale,0.01);
       const defaultContentWorldHeight = (CONTAINER_HEIGHT_PX || 1) / Math.max(scale,0.01);
       contentMinXWorld = -defaultContentWorldWidth / 2;
@@ -368,6 +380,7 @@ export default function Home() {
       contentMaxYWorld = defaultContentWorldHeight / 2;
     }
 
+    // Padding in world units, equivalent to 50% of viewport
     const paddingXWorld = (containerWidth / 2) / Math.max(scale, 0.01); 
     const paddingYWorld = (CONTAINER_HEIGHT_PX / 2) / Math.max(scale, 0.01); 
 
@@ -376,18 +389,21 @@ export default function Home() {
     
     let targetOffsetX, targetOffsetY;
 
+    // If content (plus padding) is smaller than viewport, center it
     if (contentWorldWidth * scale <= containerWidth) {
+        // Calculate offset to center the content's midpoint in the viewport
         targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
     } else { 
-        targetOffsetX = offsetX; 
+        targetOffsetX = offsetX; // Keep current offset if content is larger than viewport
     }
 
     if (contentWorldHeight * scale <= CONTAINER_HEIGHT_PX) {
         targetOffsetY = (CONTAINER_HEIGHT_PX / 2) - ((contentMinYWorld + contentMaxYWorld) / 2) * scale;
     } else { 
-        targetOffsetY = offsetY; 
+        targetOffsetY = offsetY; // Keep current offset
     }
 
+    // Calculate min/max offsets based on content edges and padding
     const minOffsetX = containerWidth - (contentMaxXWorld * scale) - paddingXWorld * scale;
     const maxOffsetX = -(contentMinXWorld * scale) + paddingXWorld * scale;
     const minOffsetY = CONTAINER_HEIGHT_PX - (contentMaxYWorld * scale) - paddingYWorld * scale;
@@ -395,6 +411,7 @@ export default function Home() {
     
     let finalMinOffsetX, finalMaxOffsetX, finalMinOffsetY, finalMaxOffsetY;
 
+    // If content is centered, pan limits collapse to the centering offset
     if (contentWorldWidth * scale <= containerWidth) {
         finalMinOffsetX = targetOffsetX;
         finalMaxOffsetX = targetOffsetX;
@@ -417,28 +434,31 @@ export default function Home() {
     setPanXSliderLimits(newPanXLimits);
     setPanYSliderLimits(newPanYLimits);
     
-  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]);
+  }, [nodes, scale, containerWidth, activeInteractionNodeId, getNodeDimension, interactionMode, offsetX, offsetY]); // Removed offsetX, offsetY from here to break loop
 
-  // Effect to clamp offsetX
+  // Effect to clamp offsetX based on calculated limits
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
     
     const currentVal = offsetX;
-    const roundedVal = Math.round(currentVal);
+    const roundedVal = Math.round(currentVal); // Sliders operate on integers
 
     const minLimit = panXSliderLimits.min;
     const maxLimit = panXSliderLimits.max;
     
     let clampedRoundedVal = Math.max(minLimit, Math.min(maxLimit, roundedVal));
 
+    // Only set if the clamped integer value is different from current rounded value,
+    // or if current value is float and needs snapping
     if (clampedRoundedVal !== roundedVal && isFinite(clampedRoundedVal)) {
         setOffsetX(clampedRoundedVal);
     } else if (currentVal !== roundedVal && Math.abs(currentVal - roundedVal) > 0.0001 && isFinite(roundedVal)) { 
+        // Snap float values to int if they are not being clamped
         setOffsetX(roundedVal);
     }
   }, [panXSliderLimits, offsetX, activeInteractionNodeId, interactionMode, setOffsetX]);
 
-  // Effect to clamp offsetY
+  // Effect to clamp offsetY based on calculated limits
   useEffect(() => {
     if (activeInteractionNodeId || interactionMode === 'pinchZooming') return;
 
@@ -463,8 +483,10 @@ export default function Home() {
       let currentNodesForCreation = [...nodes];
       const tagsArray = newNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
 
+      // Ensure "Main" tag uniqueness
       if (tagsArray.includes("Main")) {
         currentNodesForCreation = currentNodesForCreation.map(n => {
+          // Only modify other nodes, not the one currently being created/edited (if editing logic was here)
           if (n.id !== editingNode?.id && n.tags.includes("Main")) { 
             return { ...n, tags: n.tags.filter(t => t !== "Main") };
           }
@@ -478,6 +500,7 @@ export default function Home() {
       const newNodeDimension = getNodeDimension(newNodeType);
 
       if (pendingNodeCreationCoords) {
+        // Place node centered at the quick-press coordinates
         newNodeX = pendingNodeCreationCoords.x - newNodeDimension / 2; 
         newNodeY = pendingNodeCreationCoords.y - newNodeDimension / 2;
         
@@ -486,14 +509,18 @@ export default function Home() {
         setPendingNodeCreationCoords(null); 
       }
       
+      // If not placed by quick press, use random placement logic
       if (!placed) { 
         let attempts = 0;
+        // Calculate the center of the current viewport in world coordinates
         const worldViewCenterX = (-offsetX + containerWidth / 2) / scale;
         const worldViewCenterY = (-offsetY + CONTAINER_HEIGHT_PX / 2) / scale;
+        // Define a creation area (e.g., 50% of viewport) around the center
         const creationAreaWorldWidth = (containerWidth / 2) / scale; 
         const creationAreaWorldHeight = (CONTAINER_HEIGHT_PX / 2) / scale; 
 
         do {
+          // Random position within the creation area
           newNodeX = worldViewCenterX - (creationAreaWorldWidth / 2) + Math.random() * creationAreaWorldWidth;
           newNodeY = worldViewCenterY - (creationAreaWorldHeight / 2) + Math.random() * creationAreaWorldHeight;
 
@@ -504,7 +531,7 @@ export default function Home() {
               newNodeX < existingNode.x + existingNodeDimension &&
               newNodeX + newNodeDimension > existingNode.x &&
               newNodeY < existingNode.y + existingNodeDimension &&
-              newNodeY + newNodeDimension > existingNode.y
+              newNodeY + existingNodeDimension > existingNode.y
             ) {
               overlap = true;
               break;
@@ -514,6 +541,7 @@ export default function Home() {
           attempts++;
         } while (!placed && attempts < MAX_PLACEMENT_ATTEMPTS);
 
+        // Fallback if no non-overlapping spot found after attempts
         if (!placed) { 
           newNodeX = worldViewCenterX - newNodeDimension / 2;
           newNodeY = worldViewCenterY - newNodeDimension / 2;
@@ -536,6 +564,7 @@ export default function Home() {
       setNodes(updatedNodes);
       await saveNodesToFileCallback(updatedNodes);
 
+      // Reset form fields and close dialog
       setNewNodeName(""); setNewNodeDescription(""); setNewNodeTags(""); setNewNodeType('category'); setNewNodeBirthday("");
       setIsCreateNodeDialogOpen(false);
     }
@@ -548,22 +577,26 @@ export default function Home() {
     setEditNodeTags(node.tags.join(', '));
     setEditNodeBirthday(node.birthday || "");
     setIsEditNodeDialogOpen(true);
-    setActiveInteractionNodeId(null); 
+    setActiveInteractionNodeId(null); // Ensure no interaction when dialog is open
   }, []);
 
   const saveNodeChanges = async () => {
     if (editingNode && editNodeName) {
       const tagsArray = editNodeTags.split(',').map(tag => tag.trim()).filter(tag => tag);
       
+      // Provisionally update nodes to check for "Main" tag change
       let provisionallyUpdatedNodes = nodes.map(n =>
         n.id === editingNode.id
+        // Update the edited node
         ? { ...n, name: editNodeName, description: editNodeDescription, tags: tagsArray, birthday: editingNode.type === 'entity' ? editNodeBirthday : undefined }
         : n
       );
 
+      // Handle "Main" tag uniqueness
       const editedNodeIsMain = tagsArray.includes("Main");
       if (editedNodeIsMain) {
         provisionallyUpdatedNodes = provisionallyUpdatedNodes.map(n => {
+          // If another node has "Main", remove it
           if (n.id !== editingNode.id && n.tags.includes("Main")) {
             return { ...n, tags: n.tags.filter(t => t !== "Main") };
           }
@@ -615,6 +648,7 @@ export default function Home() {
       setEdges(updatedEdges);
       await saveEdgesToFileCallback(updatedEdges);
 
+      // Reset state for edge creation dialog
       setIsCreateEdgeDialogOpen(false);
       setNewEdgeDataSourceNodeId(null);
       setNewEdgeDataTargetNodeId(null);
@@ -647,10 +681,12 @@ export default function Home() {
     }
   };
 
+  // Node-specific interaction start
   const handleNodeInteractionStart = (
     event: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
     node: Node
   ) => {
+    // Clear any canvas-global interaction states
     setInteractionMode('none');
     setPanStartCoords(null);
     setQuickPressStartInfo(null);
@@ -669,18 +705,21 @@ export default function Home() {
         y: worldMousePos.y - node.y
     });
 
+    // Reset flags for this interaction
     setIsDraggingForReposition(false);
     setIsLinkingModeActive(false);
     setLinkingSourceNodeId(null);
     setLinkingLinePreview(null);
 
+    // Start press-hold timer
     if (pressHoldTimer) clearTimeout(pressHoldTimer);
     const timer = setTimeout(() => {
+      // Check if the same node is still active and no drag has started
       if (activeInteractionNodeId === node.id && !isDraggingForReposition && !showSearchBar) { 
         setIsLinkingModeActive(true);
         setLinkingSourceNodeId(node.id);
       }
-      setPressHoldTimer(null); 
+      setPressHoldTimer(null); // Clear timer ref after execution
     }, PRESS_HOLD_THRESHOLD);
     setPressHoldTimer(timer);
   };
@@ -699,21 +738,27 @@ export default function Home() {
   };
 
 
+  // Canvas-global interaction start
   const handleCanvasInteractionStart = useCallback((event: React.MouseEvent | React.TouchEvent) => {
     const targetElement = event.target as HTMLElement;
 
+    // Ensure interaction is directly on the canvas background or the transformed content area
     const isDirectlyOnContainer = containerRef.current === targetElement;
     const isDirectlyOnTransformedContent = transformedContentRef.current === targetElement;
 
     if (!isDirectlyOnContainer && !isDirectlyOnTransformedContent) {
+      // If the event target is not the main container or the transformed content area,
+      // it's likely a node or some other element we don't want to trigger background interactions.
       return; 
     }
     
+    // Handle two-finger touch for pinch-zooming
     if (event.type.startsWith('touch')) {
         const touchEvent = event as React.TouchEvent;
         if (touchEvent.touches.length === 2) {
             if (touchEvent.cancelable) touchEvent.preventDefault();
 
+            // Clear any active node interaction
             setActiveInteractionNodeId(null);
             setIsDraggingForReposition(false);
             setIsLinkingModeActive(false);
@@ -723,6 +768,7 @@ export default function Home() {
             setInteractionStartPos(null);
             setDragOffset(null);
 
+            // Set up for pinch-zoom
             setInteractionMode('pinchZooming');
             const initialDistance = getDistance(touchEvent.touches);
             const screenMid = getMidpoint(touchEvent.touches);
@@ -732,54 +778,58 @@ export default function Home() {
                 initialScale: scale,
                 pinchMidpointWorld: worldMid,
             });
+            // Reset other canvas interaction states
             setPanStartCoords(null);
             setQuickPressStartInfo(null);
             return;
         }
     }
      
+    // For single touch or mouse down on canvas background
     if (event.type.startsWith('touch') && event.cancelable) {
-      event.preventDefault();
+      event.preventDefault(); // Prevent page scroll etc.
     }
     const point = 'touches' in event ? (event as React.TouchEvent).touches[0] : (event as React.MouseEvent);
     const screenCoords = { x: point.clientX, y: point.clientY };
     const worldCoords = screenToWorld(point.clientX, point.clientY);
 
     setInteractionMode('backgroundQuickPressCandidate');
-    setPanStartCoords(screenCoords);
-    setQuickPressStartInfo({ 
+    setPanStartCoords(screenCoords); // For potential panning
+    setQuickPressStartInfo({ // For potential quick press
       screenX: screenCoords.x, 
       screenY: screenCoords.y, 
       worldX: worldCoords.x, 
       worldY: worldCoords.y, 
       time: Date.now() 
     });
-    setPinchStartData(null);
+    setPinchStartData(null); // Ensure pinch data is clear if it's a single touch
 
 
-  }, [screenToWorld, scale, pressHoldTimer, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setPressHoldTimer]); 
+  }, [screenToWorld, scale, pressHoldTimer, setActiveInteractionNodeId, setIsDraggingForReposition, setIsLinkingModeActive, setLinkingSourceNodeId, setLinkingLinePreview, setInteractionStartPos, setDragOffset, setPressHoldTimer]); // Added all relevant dependencies
 
+  // Effect for handling global move and end events based on interaction mode
   useEffect(() => {
     const currentContainerRef = containerRef.current;
 
     const handleMove = (event: MouseEvent | TouchEvent) => {
+      // Node-specific interactions (drag, link preview)
       if (activeInteractionNodeId && interactionStartPos && dragOffset && containerRef.current) {
         if (event.type.startsWith('touch') && event.cancelable) event.preventDefault();
         const point = 'touches' in event ? event.touches[0] : event;
-        if (!point) return; 
+        if (!point) return; // Should not happen if event is firing
 
         const worldMousePos = screenToWorld(point.clientX, point.clientY);
         const screenDx = point.clientX - interactionStartPos.x;
         const screenDy = point.clientY - interactionStartPos.y;
 
         if (Math.abs(screenDx) > DRAG_MOVE_THRESHOLD || Math.abs(screenDy) > DRAG_MOVE_THRESHOLD) {
-          if (pressHoldTimer) { 
+          if (pressHoldTimer) { // If significant drag, cancel press-hold
             clearTimeout(pressHoldTimer);
             setPressHoldTimer(null);
           }
 
           if (isLinkingModeActive && linkingSourceNodeId) {
-            setIsDraggingForReposition(false); 
+            setIsDraggingForReposition(false); // Ensure not in reposition mode
             const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
             if (sourceNode) {
               const sourceDim = getNodeDimension(sourceNode);
@@ -790,19 +840,23 @@ export default function Home() {
                 y2: worldMousePos.y,
               });
             }
-          } else {
+          } else { // Not linking, must be repositioning
             setIsDraggingForReposition(true);
             setNodes(prevNodes => prevNodes.map(n => {
               if (n.id === activeInteractionNodeId) {
+                // Direct update of node position based on drag
                 let newX = worldMousePos.x - dragOffset.x;
                 let newY = worldMousePos.y - dragOffset.y;
+                // Add boundary checks here if needed for node movement
                 return { ...n, x: newX, y: newY };
               }
               return n;
             }));
           }
         }
-      } else if (interactionMode === 'pinchZooming' && pinchStartData && 'touches' in event && (event as TouchEvent).touches.length === 2) {
+      } 
+      // Pinch-zooming
+      else if (interactionMode === 'pinchZooming' && pinchStartData && 'touches' in event && (event as TouchEvent).touches.length === 2) {
           if (event.cancelable) event.preventDefault();
           const touches = (event as TouchEvent).touches;
           const currentDistance = getDistance(touches);
@@ -810,10 +864,11 @@ export default function Home() {
           
           const scaleFactor = currentDistance / pinchStartData.initialPinchDistance;
           let newScale = pinchStartData.initialScale * scaleFactor;
-          newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); 
+          newScale = Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)); // Clamp scale
 
-          if (containerRef.current && isFinite(newScale) && newScale > 0) {
+          if (containerRef.current && isFinite(newScale) && newScale > 0) { // Ensure valid scale
             const rect = containerRef.current.getBoundingClientRect();
+            // Calculate new offsets to keep pinchMidpointWorld under currentScreenMidpoint
             const newOffsetX = currentScreenMidpoint.x - rect.left - (pinchStartData.pinchMidpointWorld.x * newScale);
             const newOffsetY = currentScreenMidpoint.y - rect.top - (pinchStartData.pinchMidpointWorld.y * newScale);
 
@@ -822,12 +877,13 @@ export default function Home() {
             setOffsetY(newOffsetY);
           }
       }
+      // Background interactions (panning)
       else if (interactionMode === 'backgroundQuickPressCandidate' && panStartCoords && quickPressStartInfo) {
         const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
         const currentX = point.clientX;
         const currentY = point.clientY;
         if (Math.abs(currentX - quickPressStartInfo.screenX) > DRAG_MOVE_THRESHOLD || Math.abs(currentY - quickPressStartInfo.screenY) > DRAG_MOVE_THRESHOLD) {
-          setInteractionMode('backgroundPanning');
+          setInteractionMode('backgroundPanning'); // Transition to panning
         }
       } else if (interactionMode === 'backgroundPanning' && panStartCoords) {
         const point = 'touches' in event ? (event as TouchEvent).touches[0] : (event as MouseEvent);
@@ -835,19 +891,22 @@ export default function Home() {
         const dy = point.clientY - panStartCoords.y;
         setOffsetX(prev => prev + dx);
         setOffsetY(prev => prev + dy);
-        setPanStartCoords({ x: point.clientX, y: point.clientY });
+        setPanStartCoords({ x: point.clientX, y: point.clientY }); // Update pan start for next delta
       }
     };
 
     const handleEnd = async (event: MouseEvent | TouchEvent) => {
+      // Node-specific interaction end
       if (activeInteractionNodeId) {
-        if (pressHoldTimer) {
+        if (pressHoldTimer) { // Clear timer if interaction ends before it fires
           clearTimeout(pressHoldTimer);
           setPressHoldTimer(null);
         }
 
         const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
+        // Fallback if point is undefined (should not happen with up/end events but good for safety)
         if (!point || !containerRef.current) {
+          // Reset states if something unexpected happens
           if (!showSearchBar && !isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen) setActiveInteractionNodeId(null);
           setInteractionStartPos(null); setDragOffset(null); setIsDraggingForReposition(false);
           setIsLinkingModeActive(false); setLinkingSourceNodeId(null); setLinkingLinePreview(null);
@@ -857,7 +916,9 @@ export default function Home() {
         const worldMouseReleasePos = screenToWorld(point.clientX, point.clientY);
         let targetNodeUnderneath: Node | null = null;
 
+        // Find if released over another node (excluding the active one unless linking)
         for (const node of nodes) {
+          // Skip self if not in linking mode or if it's the linking source.
           if (node.id === activeInteractionNodeId && !isLinkingModeActive) continue; 
           if (isLinkingModeActive && node.id === linkingSourceNodeId) continue;
 
@@ -867,14 +928,15 @@ export default function Home() {
             worldMouseReleasePos.y >= node.y && worldMouseReleasePos.y <= node.y + nodeDim
           ) {
             targetNodeUnderneath = node;
-            break; 
+            break; // Found a target
           }
         }
 
-        if (linkingLinePreview && linkingSourceNodeId) { 
+        // --- Logic based on what type of node interaction just ended ---
+        if (linkingLinePreview && linkingSourceNodeId) { // Was dragging in linking mode
           const sourceNode = nodes.find(n => n.id === linkingSourceNodeId);
-          if(sourceNode){ 
-              if (targetNodeUnderneath) { 
+          if(sourceNode){ // Should always be true if linkingSourceNodeId is set
+              if (targetNodeUnderneath) { // Released over another node
                   const existingEdge = findExistingEdge(linkingSourceNodeId, targetNodeUnderneath.id);
                   if (existingEdge) {
                       setEditingEdge(existingEdge);
@@ -886,7 +948,8 @@ export default function Home() {
                       setNewEdgeTagsInput("");
                       setIsCreateEdgeDialogOpen(true);
                   }
-              } else { 
+              } else { // Released on empty space after linking drag
+                  // Move the source node to the release point
                   const updatedNodes = nodes.map(n => {
                       if (n.id === linkingSourceNodeId) {
                           const nodeDim = getNodeDimension(n);
@@ -903,9 +966,9 @@ export default function Home() {
                   await saveNodesToFileCallback(updatedNodes); 
               }
           }
-        } else if (isDraggingForReposition) { 
-          const draggedNodeId = activeInteractionNodeId; 
-          if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { 
+        } else if (isDraggingForReposition) { // Was dragging for repositioning
+          const draggedNodeId = activeInteractionNodeId; // This should be the node just dragged
+          if (targetNodeUnderneath && draggedNodeId && draggedNodeId !== targetNodeUnderneath.id) { // Dropped on another node
               const existingEdge = findExistingEdge(draggedNodeId, targetNodeUnderneath.id);
               if (existingEdge) {
                   setEditingEdge(existingEdge);
@@ -918,14 +981,16 @@ export default function Home() {
                   setIsCreateEdgeDialogOpen(true);
               }
           }
+          // Node's position was updated during drag, now persist all nodes
           await saveNodesToFileCallback(nodes); 
-        } else if (isLinkingModeActive) { 
+        } else if (isLinkingModeActive) { // Press-hold completed, but no significant drag (linkingLinePreview not drawn)
           setShowSearchBar(true);
-        } else if (!isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { 
+        } else if (!isDraggingForReposition && !isLinkingModeActive && !showSearchBar) { // Simple click/tap
           const nodeToEdit = nodes.find(n => n.id === activeInteractionNodeId);
           if (nodeToEdit) openEditNodeDialog(nodeToEdit);
         }
 
+        // Reset node interaction states, unless a dialog or search bar was opened
         if (!isCreateEdgeDialogOpen && !isEditNodeDialogOpen && !isEditEdgeDialogOpen && !showSearchBar) {
           setActiveInteractionNodeId(null);
         }
@@ -935,12 +1000,17 @@ export default function Home() {
         setIsLinkingModeActive(false);
         setLinkingSourceNodeId(null);
         setLinkingLinePreview(null);
-      } else if (interactionMode === 'pinchZooming') {
+      } 
+      // Pinch-zooming end
+      else if (interactionMode === 'pinchZooming') {
+        // If one finger remains after pinch (touchend for one of two touches)
+        // or both fingers are lifted.
         if ('touches' in event && (event as TouchEvent).touches.length < 2) {
             setInteractionMode('none');
             setPinchStartData(null);
         }
       }
+      // Background quick press candidate evaluation
       else if (interactionMode === 'backgroundQuickPressCandidate' && quickPressStartInfo) {
         const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : (event as MouseEvent);
         const releaseTime = Date.now();
@@ -951,25 +1021,30 @@ export default function Home() {
         );
 
         if (duration < QUICK_PRESS_DURATION_THRESHOLD && screenDistanceMoved < DRAG_MOVE_THRESHOLD) {
+          // It's a quick press!
           setPendingNodeCreationCoords({ x: quickPressStartInfo.worldX, y: quickPressStartInfo.worldY });
           setIsCreateNodeDialogOpen(true);
         }
-        setQuickPressStartInfo(null);
+        setQuickPressStartInfo(null); // Clear after evaluation
       }
 
       
+      // Always reset canvas-global interaction mode if not actively pinching
+      // This ensures that backgroundPanning or backgroundQuickPressCandidate are reset.
       if (interactionMode !== 'none' && interactionMode !== 'pinchZooming') { 
           setInteractionMode('none');
       }
-      setPanStartCoords(null); 
+      setPanStartCoords(null); // Clear pan start coords
     };
 
+    // Attach canvas-global event listeners if containerRef exists
     if (currentContainerRef) {
       currentContainerRef.addEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
       currentContainerRef.addEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener, { passive: false });
     }
 
     
+    // Attach window-level listeners if any interaction (node or canvas) is active
     if (activeInteractionNodeId || interactionMode !== 'none') {
       window.addEventListener('mousemove', handleMove);
       window.addEventListener('mouseup', handleEnd);
@@ -979,17 +1054,21 @@ export default function Home() {
 
 
     return () => {
+      // Cleanup window listeners
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleEnd);
       window.removeEventListener('touchmove', handleMove);
       window.removeEventListener('touchend', handleEnd);
+      // Cleanup container listeners
       if (currentContainerRef) {
         currentContainerRef.removeEventListener('mousedown', handleCanvasInteractionStart as unknown as EventListener);
         currentContainerRef.removeEventListener('touchstart', handleCanvasInteractionStart as unknown as EventListener);
       }
+      // Cleanup press-hold timer if component unmounts or effect re-runs
       if (pressHoldTimer) clearTimeout(pressHoldTimer);
     };
   }, [
+      // List all state and callback dependencies
       activeInteractionNodeId, interactionStartPos, dragOffset, pressHoldTimer, nodes, edges, 
       isDraggingForReposition, showSearchBar, openEditNodeDialog, isLinkingModeActive, 
       linkingSourceNodeId, linkingLinePreview, isCreateEdgeDialogOpen, isEditNodeDialogOpen, 
@@ -1000,14 +1079,15 @@ export default function Home() {
       setLinkingSourceNodeId, setLinkingLinePreview, setPressHoldTimer, setInteractionStartPos, setDragOffset,
       setInteractionMode, setPanStartCoords, setQuickPressStartInfo, setPinchStartData, setScale, setOffsetX, setOffsetY,
       setEditingEdge, setEditEdgeTagsInput, setNewEdgeDataSourceNodeId, setNewEdgeDataTargetNodeId, setNewEdgeTagsInput,
-      setShowSearchBar, setIsCreateNodeDialogOpen, setPendingNodeCreationCoords
+      setShowSearchBar, setIsCreateNodeDialogOpen, setPendingNodeCreationCoords // Ensure all used states and props are here
   ]);
 
 
+  // --- Repulsion Physics ---
   const applyRepulsion = useCallback((currentNodes: Node[], fixedNodeId: string | null): Node[] => {
     if (currentNodes.length < 2 || containerWidth === 0) return currentNodes;
 
-    let newNodes = currentNodes.map(n => ({ ...n })); 
+    let newNodes = currentNodes.map(n => ({ ...n })); // Create a mutable copy for iterative adjustments
 
     for (let iter = 0; iter < REPULSION_ITERATIONS; iter++) {
       let systemMoved = false;
@@ -1016,6 +1096,8 @@ export default function Home() {
           const nodeA = newNodes[i];
           const nodeB = newNodes[j];
 
+          // If either node is the fixedNodeId, skip repulsion between them
+          // The fixedNodeId neither exerts nor is affected by repulsion
            if (fixedNodeId && (nodeA.id === fixedNodeId || nodeB.id === fixedNodeId)) {
               continue; 
           }
@@ -1036,7 +1118,7 @@ export default function Home() {
           const targetSeparation = radiusA + radiusB + MIN_SEPARATION;
           const targetSeparationSquared = targetSeparation * targetSeparation;
 
-          if (distanceSquared < targetSeparationSquared && distanceSquared > 0.001) { 
+          if (distanceSquared < targetSeparationSquared && distanceSquared > 0.001) { // Nodes overlap or are too close
             const distance = Math.sqrt(distanceSquared);
             const overlap = targetSeparation - distance;
             const forceMagnitude = overlap * REPULSION_STRENGTH; 
@@ -1044,11 +1126,13 @@ export default function Home() {
             const normDx = dx / distance;
             const normDy = dy / distance;
             
+            // Move nodes apart along the line connecting their centers
             let moveAx = -normDx * forceMagnitude / 2;
             let moveAy = -normDy * forceMagnitude / 2;
             let moveBx = normDx * forceMagnitude / 2;
             let moveBy = normDy * forceMagnitude / 2;
             
+            // Apply movement and track if system changed
             const prevXA = nodeA.x;
             const prevYA = nodeA.y;
             nodeA.x += moveAx;
@@ -1064,42 +1148,47 @@ export default function Home() {
           }
         }
       }
-      if (!systemMoved && iter > 0) break; 
+      if (!systemMoved && iter > 0) break; // If system is stable, stop early
     }
     return newNodes;
-  }, [getNodeDimension, containerWidth]); 
+  }, [getNodeDimension, containerWidth]); // Dependencies for repulsion logic
 
+  // Apply repulsion when no node is actively being interacted with
   useEffect(() => { 
+    // Only run if no node is selected, not pinching, and container is ready
     if (nodes.length < 2 || containerWidth === 0 || activeInteractionNodeId || interactionMode !== 'none') return; 
 
-    const repulsedNodes = applyRepulsion(nodes, null); 
+    const repulsedNodes = applyRepulsion(nodes, null); // No fixed node
     let changed = false;
-    if (nodes.length === repulsedNodes.length) { 
+    if (nodes.length === repulsedNodes.length) { // Basic check if arrays can be compared
         for (let i = 0; i < nodes.length; i++) {
             if (Math.abs(nodes[i].x - repulsedNodes[i].x) > 0.1 || Math.abs(nodes[i].y - repulsedNodes[i].y) > 0.1) {
                 changed = true;
                 break;
             }
         }
-    } else { changed = true; } 
+    } else { changed = true; } // If length changed, it's different
 
     if (changed) {
       const timeoutId = setTimeout(async () => {
         setNodes(repulsedNodes);
         await saveNodesToFileCallback(repulsedNodes);
-      }, 50); 
+      }, 50); // Slight delay to batch updates
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); 
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); // Ensure `interactionMode` is a dependency
 
+  // Apply repulsion when a node IS active (fixedNodeId), repelling others
   useEffect(() => { 
+    // Only run if a node is selected, not pinching, and container is ready
     if (nodes.length < 2 || containerWidth === 0 || !activeInteractionNodeId || interactionMode !== 'none') return; 
 
-    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); 
+    const repulsedNodes = applyRepulsion(nodes, activeInteractionNodeId); // Pass active node as fixed
     let changed = false;
 
+    // Check if any NON-FIXED node moved
     for (let i = 0; i < nodes.length; i++) {
-        if (nodes[i].id === activeInteractionNodeId) continue; 
+        if (nodes[i].id === activeInteractionNodeId) continue; // Skip the fixed node
         const rn = repulsedNodes.find(r => r.id === nodes[i].id);
         if (rn && (Math.abs(nodes[i].x - rn.x) > 0.1 || Math.abs(nodes[i].y - rn.y) > 0.1)) {
             changed = true;
@@ -1109,25 +1198,29 @@ export default function Home() {
 
     if (changed) {
       const timeoutId = setTimeout(async () => {
+        // Update nodes, keeping the fixed node's position from original `nodes` array
         const finalUpdatedNodes = nodes.map(cn => {
-            if (cn.id === activeInteractionNodeId) return cn; 
+            if (cn.id === activeInteractionNodeId) return cn; // Keep original position of fixed node
             const rn = repulsedNodes.find(r => r.id === cn.id);
-            return rn || cn; 
+            return rn || cn; // Use repulsed position or original if not found (should not happen)
         });
         setNodes(finalUpdatedNodes);
         await saveNodesToFileCallback(finalUpdatedNodes);
       }, 50);
       return () => clearTimeout(timeoutId);
     }
-  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]);
+  }, [nodes, activeInteractionNodeId, applyRepulsion, containerWidth, saveNodesToFileCallback, interactionMode, setNodes]); // Ensure `interactionMode` is a dependency
 
 
+  // --- Client-Side Only Rendering Guard ---
   const [isClient, setIsClient] = useState(false);
   useEffect(() => setIsClient(true), []);
 
+  // --- Derived Values for Rendering ---
   const minScale = LOG_SCALE_MIN;
   const maxScale = LOG_SCALE_MAX;
 
+  // Memoize screen grid data calculation
   const screenGridData = useMemo(() => {
     if (!isClient || containerWidth === 0 || CONTAINER_HEIGHT_PX === 0 || scale === 0 || !isFinite(scale)) {
       return { verticalLines: [], horizontalLines: [] };
@@ -1135,6 +1228,7 @@ export default function Home() {
     return calculateScreenGridLinePositions(offsetX, offsetY, scale, containerWidth, CONTAINER_HEIGHT_PX);
   }, [isClient, offsetX, offsetY, scale, containerWidth]);
   
+  // --- File Upload Handler ---
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1148,6 +1242,7 @@ export default function Home() {
           return;
         }
         const data = JSON.parse(text);
+        // Basic validation of uploaded data structure
         if (data && Array.isArray(data.nodes) && Array.isArray(data.edges)) {
           
           const areNodesValid = data.nodes.every((n: any) => 
@@ -1157,6 +1252,7 @@ export default function Home() {
             typeof n.y === 'number' &&
             Array.isArray(n.tags) &&
             (n.type === 'category' || n.type === 'entity')
+            // Add more checks as needed (e.g., for birthday format if entity)
           );
           
           const areEdgesValid = data.edges.every((edge: any) => 
@@ -1164,7 +1260,8 @@ export default function Home() {
             typeof edge.sourceNodeId === 'string' &&
             typeof edge.targetNodeId === 'string' &&
             Array.isArray(edge.tags) &&
-            edge.tags.every((tag: any) => typeof tag.name === 'string')
+            edge.tags.every((tag: any) => typeof tag.name === 'string') // Basic check for tag name
+            // Add more checks for EdgeTag structure if needed (e.g. date format)
           );
 
           if (!areNodesValid || !areEdgesValid) {
@@ -1172,12 +1269,15 @@ export default function Home() {
             return;
           }
           
+          // Set flag to re-run centering logic after loading new data
           setInitialLoadAndCenteringComplete(false); 
           setNodes(data.nodes as Node[]);
           setEdges(data.edges as Edge[]);
+          // Save the uploaded data to server/file system
           await saveNodesToFileCallback(data.nodes as Node[]);
           await saveEdgesToFileCallback(data.edges as Edge[]);
           alert("Data uploaded and saved successfully!");
+          // Trigger re-load and potential re-centering
           loadInitialData();
           
         } else {
@@ -1187,7 +1287,7 @@ export default function Home() {
         console.error("Error processing uploaded file:", error);
         alert("Error processing uploaded file. Check console for details.");
       } finally {
-        
+        // Reset file input to allow uploading the same file again if needed
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -1196,10 +1296,12 @@ export default function Home() {
     reader.readAsText(file);
   };
 
+  // Calculate world stroke width for edges based on scale
   const worldStrokeWidth = useMemo(() => {
     return (EDGE_BASE_SCREEN_THICKNESS * (1 + Math.min(scale, 1)) / 2) / Math.max(scale, 0.001);
   }, [scale]);
 
+  // Calculate the linear slider value for zoom based on the current log scale
   const linearScaleSliderValue = isClient ? Math.round(logToLinearScale(scale, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX)) : Math.round(logToLinearScale(1, LOG_SCALE_MIN, LOG_SCALE_MAX, LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX));
 
 
@@ -1217,7 +1319,10 @@ export default function Home() {
           variant="ghost"
           size="icon"
           className="absolute top-2 left-2 z-50 bg-card/80 backdrop-blur-sm text-foreground hover:bg-accent hover:text-accent-foreground"
-          onClick={() => setIsSliderPanelOpen(!isSliderPanelOpen)}
+          onClick={(e) => {
+            setIsSliderPanelOpen(!isSliderPanelOpen);
+            (e.currentTarget as HTMLButtonElement).blur();
+          }}
           aria-label={isSliderPanelOpen ? "Close controls panel" : "Open controls panel"}
         >
           {isSliderPanelOpen ? <XIcon className="h-5 w-5" /> : <Settings className="h-5 w-5" />}
@@ -1229,8 +1334,8 @@ export default function Home() {
             "absolute top-0 left-0 right-0 z-40 bg-card/90 backdrop-blur-md p-4 pt-14 space-y-3 rounded-b-lg shadow-lg transition-all duration-300 ease-in-out",
             isSliderPanelOpen ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0 pointer-events-none"
           )}
-          onMouseDown={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()} // Prevent canvas interaction when clicking on panel
+          onTouchStart={(e) => e.stopPropagation()} // Prevent canvas interaction when touching panel
         >
           <div className="w-full grid grid-cols-4 gap-2 items-center px-1">
               <Label htmlFor="scale-slider" className="text-sm text-right col-span-1">Zoom: {isClient ? Math.round(scale * 100) : 100}%</Label>
@@ -1239,7 +1344,7 @@ export default function Home() {
                   min={LINEAR_SLIDER_MIN}
                   max={LINEAR_SLIDER_MAX}
                   step={1} 
-                  value={[Math.round(linearScaleSliderValue)]}
+                  value={[Math.round(linearScaleSliderValue)]} // Ensure value is rounded for slider
                   onValueChange={(value) => {
                       const newScale = linearToLogScale(value[0], LINEAR_SLIDER_MIN, LINEAR_SLIDER_MAX, LOG_SCALE_MIN, LOG_SCALE_MAX);
                       setScale(Math.max(LOG_SCALE_MIN, Math.min(LOG_SCALE_MAX, newScale)));
@@ -1254,7 +1359,7 @@ export default function Home() {
                   min={isClient && containerWidth > 0 ? Math.round(panXSliderLimits.min) : -1000}
                   max={isClient && containerWidth > 0 ? Math.round(panXSliderLimits.max) : 1000}
                   step={1}
-                  value={[Math.round(offsetX)]}
+                  value={[Math.round(offsetX)]} // Ensure value is rounded
                   onValueChange={(value) => setOffsetX(value[0])}
                   className="col-span-3"
                   disabled={(isClient && containerWidth > 0 ? (panXSliderLimits.min >= panXSliderLimits.max) : false)}
@@ -1267,7 +1372,7 @@ export default function Home() {
                   min={isClient && containerWidth > 0 ? Math.round(panYSliderLimits.min) : -1000}
                   max={isClient && containerWidth > 0 ? Math.round(panYSliderLimits.max) : 1000}
                   step={1}
-                  value={[Math.round(offsetY)]}
+                  value={[Math.round(offsetY)]} // Ensure value is rounded
                   onValueChange={(value) => setOffsetY(value[0])}
                   className="col-span-3"
                   disabled={(isClient && containerWidth > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
@@ -1276,8 +1381,9 @@ export default function Home() {
         </div>
 
 
+        {/* Screen-Space Grid SVG - Renders on top of background, behind transformed content */}
         <svg
-          className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" 
+          className="absolute top-0 left-0 w-full h-full pointer-events-none z-0" // z-0 to be behind content
           aria-hidden="true"
         >
           {isClient && screenGridData.verticalLines.map((lineX, index) => (
@@ -1297,7 +1403,7 @@ export default function Home() {
               key={`h-screen-${index}-${lineY}`}
               x1={0}
               y1={lineY}
-              x2={containerWidth} 
+              x2={containerWidth} // Use dynamic containerWidth
               y2={lineY}
               stroke="hsl(var(--border))"
               strokeWidth={0.5}
@@ -1306,6 +1412,7 @@ export default function Home() {
           ))}
         </svg>
         
+        {/* Transformed Content (Nodes and Edges) */}
         <div
           ref={transformedContentRef}
           style={{
@@ -1313,13 +1420,14 @@ export default function Home() {
             height: '100%', 
             transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
             transformOrigin: '0 0', 
-            willChange: 'transform', 
-            zIndex: 2, 
+            willChange: 'transform', // Hint for browser optimization
+            zIndex: 2, // Ensures this is above the z-0 grid
           }}
         >
+          {/* SVG for Edges - Uses World Coordinates */}
           <svg
-            className="absolute top-0 left-0 w-full h-full pointer-events-none"
-            overflow="visible" 
+            className="absolute top-0 left-0 w-full h-full pointer-events-none" // Fills transformedContentRef
+            overflow="visible" // Important for edges that go "off-screen" relative to this SVG's initial bounds
           >
             {isClient && edges.map(edge => {
               const sourceNode = nodes.find(n => n.id === edge.sourceNodeId);
@@ -1337,11 +1445,12 @@ export default function Home() {
                   x2={targetNode.x + targetDim / 2}
                   y2={targetNode.y + targetDim / 2}
                   stroke="hsl(var(--ring))"
-                  strokeWidth={worldStrokeWidth} 
+                  strokeWidth={worldStrokeWidth} // Use calculated worldStrokeWidth
                   opacity="0.6"
                 />
               );
             })}
+            {/* Linking Preview Line */}
             {linkingLinePreview && (
               <line
                 x1={linkingLinePreview.x1}
@@ -1349,24 +1458,26 @@ export default function Home() {
                 x2={linkingLinePreview.x2}
                 y2={linkingLinePreview.y2}
                 stroke="hsl(var(--primary))"
-                strokeWidth={worldStrokeWidth} 
-                strokeDasharray={`${5/Math.max(scale, 0.001)},${5/Math.max(scale, 0.001)}`} 
+                strokeWidth={worldStrokeWidth} // Use calculated worldStrokeWidth
+                strokeDasharray={`${5/Math.max(scale, 0.001)},${5/Math.max(scale, 0.001)}`} // Dash based on scale
               />
             )}
           </svg>
 
+          {/* Render Nodes */}
           {isClient && nodes.map((node) => {
             const nodeDimension = getNodeDimension(node);
             
             const nodeStyles: React.CSSProperties = {
               position: 'absolute',
+              // Using left/top as transform was reverted due to animation feel issues
               left: `${node.x}px`,
               top: `${node.y}px`,
               width: `${nodeDimension}px`,
               height: `${nodeDimension}px`,
               backgroundColor: "hsl(var(--node-color))", 
               color: "hsl(var(--card-foreground))",     
-              zIndex: activeInteractionNodeId === node.id ? 20 : 10, 
+              zIndex: activeInteractionNodeId === node.id ? 20 : (isLinkingModeActive && linkingSourceNodeId === node.id ? 15 : 10), 
               borderRadius: '9999px', 
               display: 'flex',
               flexDirection: 'column',
@@ -1375,8 +1486,8 @@ export default function Home() {
               textAlign: 'center',
               cursor: 'pointer',
               boxShadow: '0 4px 6px hsla(var(--foreground), 0.1)', 
-              transition: 'box-shadow 0.2s ease, transform 0.2s ease', 
-              userSelect: 'none', 
+              transition: 'box-shadow 0.2s ease, transform 0.2s ease', // transform transition for active scaling (if re-added)
+              userSelect: 'none', // Prevent text selection during drag
               border: '1px solid hsl(var(--border))' 
             };
 
@@ -1385,17 +1496,22 @@ export default function Home() {
               nodeStyles.borderWidth = '2px';
             }
             
+            // Visual feedback for active node
             if(activeInteractionNodeId === node.id){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
+                // No scaling here as per user request to simplify drag animation
             }
             
-            const minFontSizeForNodeText = 6; 
-            const baseNameFontSize = 16; 
-            const baseTagFontSize = 10;  
+            // Dynamic font sizing for node text based on scale
+            const minFontSizeForNodeText = 6; // Smallest readable font size in pixels
+            const baseNameFontSize = 16; // Base font size for name at scale=1
+            const baseTagFontSize = 10;  // Base font size for tags at scale=1
 
+            // Calculate font size that appears consistent on screen, but has a floor
             const dynamicNameFontSizeScreen = Math.max(minFontSizeForNodeText, baseNameFontSize * Math.min(scale, 1)); 
             const dynamicTagFontSizeScreen = Math.max(minFontSizeForNodeText, baseTagFontSize * Math.min(scale, 1));
 
+            // Convert screen font size back to "world" font size for use in transformed element
             const finalNameFontSize = dynamicNameFontSizeScreen / Math.max(scale, 0.001);
             const finalTagFontSize = dynamicTagFontSizeScreen / Math.max(scale, 0.001);
 
@@ -1411,15 +1527,15 @@ export default function Home() {
               >
                 <h2 className="text-md font-semibold truncate w-full" style={{ fontSize: `${finalNameFontSize}px`, lineHeight: '1.2' }}>{node.name}</h2>
                 {node.tags.length > 0 && (
-                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]"> 
-                    {node.tags.slice(0, 2).map(tag => ( 
+                  <div className="mt-1 flex flex-wrap justify-center gap-1 overflow-hidden max-h-[3em]"> {/* Limit height for tags */}
+                    {node.tags.slice(0, 2).map(tag => ( // Show max 2 tags
                       <span key={tag} className="text-xs bg-black/20 text-white px-2 py-0.5 rounded-full" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>
                         {tag}
                       </span>
                     ))}
                   </div>
                 )}
-                {node.tags.length > 2 && ( 
+                {node.tags.length > 2 && ( // Indicate more tags if present
                   <span className="text-xs mt-0.5 opacity-70" style={{ fontSize: `${finalTagFontSize}px`, lineHeight: '1.2' }}>+{node.tags.length - 2} more</span>
                 )}
               </div>
@@ -1432,7 +1548,10 @@ export default function Home() {
           variant="ghost"
           size="icon"
           className="absolute bottom-2 right-2 z-50 bg-card/80 backdrop-blur-sm text-foreground hover:bg-accent hover:text-accent-foreground rounded-full w-12 h-12 shadow-lg"
-          onClick={() => setIsActionButtonsOpen(!isActionButtonsOpen)}
+          onClick={(e) => {
+             setIsActionButtonsOpen(!isActionButtonsOpen);
+             (e.currentTarget as HTMLButtonElement).blur();
+          }}
           aria-label={isActionButtonsOpen ? "Close actions menu" : "Open actions menu"}
         >
           {isActionButtonsOpen ? <XIcon className="h-6 w-6" /> : <Rows3 className="h-6 w-6" />}
@@ -1444,16 +1563,16 @@ export default function Home() {
             "absolute bottom-16 right-2 z-40 flex flex-col items-end space-y-2 transition-all duration-300 ease-in-out",
             isActionButtonsOpen ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
           )}
-          onMouseDown={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()} // Prevent canvas interaction
+          onTouchStart={(e) => e.stopPropagation()} // Prevent canvas interaction
         >
           <Dialog 
             open={isCreateNodeDialogOpen} 
             onOpenChange={(isOpen) => {
               setIsCreateNodeDialogOpen(isOpen);
               if (!isOpen) {
-                setActiveInteractionNodeId(null);
-                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); 
+                setActiveInteractionNodeId(null); // Clear active node if dialog is closed
+                if (pendingNodeCreationCoords) setPendingNodeCreationCoords(null); // Clear pending coords
               }
             }}
           >
@@ -1463,7 +1582,7 @@ export default function Home() {
                 Create Node
               </Button>
             </DialogTrigger>
-            {/* DialogContent for Create Node remains unchanged */}
+            {/* DialogContent for Create Node remains unchanged, defined below */}
           </Dialog>
           <Button onClick={loadInitialData} variant="outline" className="bg-card hover:bg-accent shadow-lg w-full justify-start px-4 py-2">
               <Download className="mr-2 h-5 w-5 transform rotate-180" /> 
@@ -1491,6 +1610,7 @@ export default function Home() {
       </div> {/* End of containerRef */}
 
 
+      {/* Search Bar - Appears when showSearchBar is true */}
       {showSearchBar && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-50 p-1 bg-background/80 backdrop-blur-sm rounded-lg shadow-2xl border border-border">
           <div className="relative p-3">
@@ -1498,6 +1618,7 @@ export default function Home() {
               placeholder="Search nodes or type to connect..."
               className="bg-card shadow-md text-lg p-3 pr-12 border-input focus:ring-primary"
               onFocus={() => { 
+                // When search bar is focused, clear any active node interaction
                 if(pressHoldTimer) clearTimeout(pressHoldTimer);
                 if(activeInteractionNodeId) setActiveInteractionNodeId(null); 
               }}
@@ -1505,14 +1626,14 @@ export default function Home() {
             <Button
               onClick={() => {
                 setShowSearchBar(false);
-                setActiveInteractionNodeId(null); 
+                setActiveInteractionNodeId(null); // Also clear active node when closing search
               }}
               variant="ghost"
               size="sm"
               className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground hover:text-foreground h-8 w-8 p-0"
               aria-label="Close search bar"
             >
-              <Plus className="h-5 w-5 rotate-45" /> 
+              <Plus className="h-5 w-5 rotate-45" /> {/* Using Plus rotated to look like X */}
             </Button>
           </div>
         </div>
@@ -1570,6 +1691,7 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit Node Dialog */}
       {editingNode && (
         <Dialog open={isEditNodeDialogOpen} onOpenChange={(isOpen) => {
             setIsEditNodeDialogOpen(isOpen);
@@ -1587,6 +1709,7 @@ export default function Home() {
               </div>
               <div className="grid gap-3">
                 <Label className="text-md">Type</Label>
+                {/* Display node type, non-editable */}
                 <p className="text-md p-3 bg-muted/50 rounded-md border border-input capitalize select-none">{editingNode?.type}</p>
               </div>
               {editingNode?.type === 'entity' && (
@@ -1604,7 +1727,7 @@ export default function Home() {
                 <Input id="edit-node-tags" value={editNodeTags} onChange={(e) => setEditNodeTags(e.target.value)} placeholder="tag1, tag2" className="text-md p-3" />
               </div>
             </div>
-            <DialogFooter className="flex justify-between items-center">
+            <DialogFooter className="flex justify-between items-center"> {/* Ensures Delete button is on left, others on right */}
               <Button variant="destructive" onClick={deleteNode} className="text-md px-5 py-2.5">
                 <Trash2 className="mr-2 h-5 w-5" /> Delete Node
               </Button>
@@ -1619,9 +1742,11 @@ export default function Home() {
         </Dialog>
       )}
 
+      {/* Create Edge Dialog */}
       <Dialog open={isCreateEdgeDialogOpen} onOpenChange={(isOpen) => {
           setIsCreateEdgeDialogOpen(isOpen);
           if (!isOpen) {
+            // Clear data if dialog is closed
             setNewEdgeDataSourceNodeId(null);
             setNewEdgeDataTargetNodeId(null);
             setActiveInteractionNodeId(null);
@@ -1654,6 +1779,7 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit Edge Dialog */}
       {editingEdge && (
         <Dialog open={isEditEdgeDialogOpen} onOpenChange={(isOpen) => {
             setIsEditEdgeDialogOpen(isOpen);
@@ -1680,7 +1806,7 @@ export default function Home() {
                 <p className="text-xs text-muted-foreground">Separate tags with commas. Dates (YYYY-MM-DD) are optional per tag.</p>
               </div>
             </div>
-            <DialogFooter className="flex justify-between"> 
+            <DialogFooter className="flex justify-between"> {/* Aligns delete button to left, others to right */}
               <Button variant="destructive" onClick={deleteEdge} className="text-md px-5 py-2.5 mr-auto">
                 <Trash2 className="mr-2 h-5 w-5" /> Delete Edge
               </Button>
