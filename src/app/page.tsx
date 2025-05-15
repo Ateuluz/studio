@@ -56,7 +56,7 @@ function linearToLogScale(
   logMax: number
 ): number {
   if (logMin <= 0 || logMax <= 0) {
-    console.error("Logarithmic scale bounds must be positive.");
+    // console.error("Logarithmic scale bounds must be positive.");
     return logMin; 
   }
   if (linearMin === linearMax) return logMin; 
@@ -75,7 +75,7 @@ function logToLinearScale(
   linearMax: number
 ): number {
   if (logValue <= 0 || logMin <= 0 || logMax <= 0) {
-    console.error("Logarithmic scale values must be positive.");
+    // console.error("Logarithmic scale values must be positive.");
     return linearMin; 
   }
   
@@ -287,7 +287,7 @@ export default function Home() {
     if (!initialLoadAndCenteringComplete && loadedNodes.length > 0 && containerWidth > 0) {
       const mainNode = nodesToSet.find(n => n.tags.includes("Main"));
       if (mainNode) {
-        setActiveInteractionNodeId(null); 
+        setActiveInteractionNodeId(null); // Reset any active interaction before re-centering
         const deltaX = -mainNode.x;
         const deltaY = -mainNode.y;
         
@@ -358,6 +358,7 @@ export default function Home() {
       contentMaxYWorld = Math.max(...nodesToConsider.map(n => n.y + getNodeDimension(n)));
     } else { 
       // Empty world: Define a default "content" area centered around world (0,0)
+      // This calculation is now independent of current offsetX/Y to prevent loops
       const defaultContentWorldWidth = containerWidth / scale;
       const defaultContentWorldHeight = CONTAINER_HEIGHT_PX / scale;
       contentMinXWorld = -defaultContentWorldWidth / 2;
@@ -377,8 +378,6 @@ export default function Home() {
     if (contentWorldWidth * scale <= containerWidth) {
         targetOffsetX = (containerWidth / 2) - ((contentMinXWorld + contentMaxXWorld) / 2) * scale;
     } else { 
-        // This indicates that offsetX is not changed if content is wider than container
-        // But if it's already out of bounds, it should be brought back
         targetOffsetX = offsetX; 
     }
 
@@ -1237,26 +1236,26 @@ export default function Home() {
             <Label htmlFor="offset-x-slider" className="text-sm text-right">Pan X: {isClient ? Math.round(offsetX) : 0}px</Label>
             <Slider
                 id="offset-x-slider"
-                min={panXSliderLimits.min}
-                max={panXSliderLimits.max}
+                min={isClient && containerWidth > 0 ? panXSliderLimits.min : -1000}
+                max={isClient && containerWidth > 0 ? panXSliderLimits.max : 1000}
                 step={1}
                 value={[Math.round(offsetX)]}
                 onValueChange={(value) => setOffsetX(value[0])}
                 className="col-span-2"
-                disabled={panXSliderLimits.min >= panXSliderLimits.max} 
+                disabled={(isClient && containerWidth > 0 ? (panXSliderLimits.min >= panXSliderLimits.max) : false)}
             />
         </div>
          <div className="w-full grid grid-cols-3 gap-4 items-center px-2">
             <Label htmlFor="offset-y-slider" className="text-sm text-right">Pan Y: {isClient ? Math.round(offsetY) : 0}px</Label>
             <Slider
                 id="offset-y-slider"
-                min={panYSliderLimits.min}
-                max={panYSliderLimits.max}
+                min={isClient && containerWidth > 0 ? panYSliderLimits.min : -1000}
+                max={isClient && containerWidth > 0 ? panYSliderLimits.max : 1000}
                 step={1}
                 value={[Math.round(offsetY)]}
                 onValueChange={(value) => setOffsetY(value[0])}
                 className="col-span-2"
-                disabled={panYSliderLimits.min >= panYSliderLimits.max} 
+                disabled={(isClient && containerWidth > 0 ? (panYSliderLimits.min >= panYSliderLimits.max) : false)}
             />
         </div>
       </div>
@@ -1375,7 +1374,7 @@ export default function Home() {
               nodeStyles.borderWidth = '2px';
             }
             
-            if(activeInteractionNodeId === node.id && (isDraggingForReposition || isLinkingModeActive)){
+            if(activeInteractionNodeId === node.id){
                 nodeStyles.boxShadow = '0 10px 15px hsla(var(--foreground), 0.2), 0 0 0 3px hsl(var(--primary))'; 
             }
             

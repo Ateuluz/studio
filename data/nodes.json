@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "id": "8cc3da10-27dd-4750-813f-7162bb50a066",
+    "name": "U",
+    "description": "",
+    "tags": [],
+    "x": -720.0274652208814,
+    "y": 1642.3511282124412,
+    "type": "category"
+  },
+  {
+    "id": "0cf50c69-f661-4596-adfd-cb6d1d5aca4e",
+    "name": "D",
+    "description": "",
+    "tags": [],
+    "x": 839.3030600631993,
+    "y": -152.6096841946225,
+    "type": "category"
+  },
+  {
+    "id": "4ce7e597-49bd-4f46-a4e9-bf2725dbc7eb",
+    "name": "Y",
+    "description": "",
+    "tags": [],
+    "x": -116.21873059291367,
+    "y": 225.1774856099811,
+    "type": "category"
+  },
+  {
+    "id": "1706900d-f21b-437f-afe3-de352be1b9fe",
+    "name": "D",
+    "description": "",
+    "tags": [],
+    "x": 765.6847302469565,
+    "y": 346.6678788049639,
+    "type": "category"
+  }
+]
